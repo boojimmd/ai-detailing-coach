@@ -187,6 +187,10 @@ input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-ca
 .cht{font-size:.9rem;font-weight:700;color:var(--txt);}
 .chs{font-size:.7rem;color:var(--txt3);margin-top:2px;}
 .cb{padding:14px 16px;}
+.cf-ch-btn{cursor:pointer;-webkit-user-select:none;user-select:none;display:flex;align-items:center;gap:10px;}
+.cf-ch-btn:active{opacity:.7;}
+.cf-chev{width:16px;height:16px;stroke:var(--txt3);transition:transform .22s ease;margin-right:auto;flex-shrink:0;}
+.cf-cb-closed{display:none;}
 
 /* ── Buttons ── */
 .btn{width:100%;padding:14px;border-radius:var(--r);background:var(--pur);color:#fff;border:none;
@@ -6491,6 +6495,15 @@ function visitTypeLabel(t) {
   return m[t] || t;
 }
 
+function toggleCFCard(n) {
+  const cb   = document.getElementById('cfCb' + n);
+  const chev = document.getElementById('cfChev' + n);
+  if (!cb) return;
+  const isOpen = !cb.classList.contains('cf-cb-closed');
+  cb.classList.toggle('cf-cb-closed', isOpen);
+  if (chev) chev.style.transform = isOpen ? 'rotate(0deg)' : 'rotate(180deg)';
+}
+
 function renderCallFlow(tmpl, prod, visitType) {
   const body = document.getElementById('cfBody');
 
@@ -6539,11 +6552,12 @@ function renderCallFlow(tmpl, prod, visitType) {
 
     <!-- CONNECT -->
     <div class="card" style="margin-bottom:0">
-      <div class="ch" style="background:var(--pur-bg)">
+      <div class="ch cf-ch-btn" style="background:var(--pur-bg)" onclick="toggleCFCard(1)">
         <div class="chi" style="background:rgba(109,40,217,.2);width:28px;height:28px;min-width:28px;font-size:.75rem;font-weight:900;color:var(--pur1)">۱</div>
         <div><div class="cht" style="color:var(--pur)">CONNECT — ارتباط (۳۰ ثانیه)</div><div class="chs">هدف: پزشک آماده شنیدن بشه</div></div>
+        <svg id="cfChev1" class="cf-chev" style="transform:rotate(180deg)"><use href="#ic-chevron"/></svg>
       </div>
-      <div class="cb" style="font-size:.82rem;color:var(--txt);line-height:1.8">
+      <div class="cb" id="cfCb1" style="font-size:.82rem;color:var(--txt);line-height:1.8">
         <div style="font-weight:700;color:var(--txt2);margin-bottom:6px;font-size:.72rem">✦ Opening پیشنهادی:</div>
         سلام دکتر — [نام پزشک] — ممنون که وقت دادید.<br>
         ${visitType === 'evidence' ? 'یه مطالعه جدید دیدم که فکر کردم برای بیمارایتون مفیده.' :
@@ -6555,11 +6569,12 @@ function renderCallFlow(tmpl, prod, visitType) {
 
     <!-- EXPLORE -->
     <div class="card" style="margin-bottom:0">
-      <div class="ch" style="background:var(--sky-bg)">
+      <div class="ch cf-ch-btn" style="background:var(--sky-bg)" onclick="toggleCFCard(2)">
         <div class="chi" style="background:rgba(37,99,235,.2);width:28px;height:28px;min-width:28px;font-size:.75rem;font-weight:900;color:var(--sky)">۲</div>
         <div><div class="cht" style="color:var(--sky)">EXPLORE — کشف نیاز (۶۰-۹۰ ثانیه)</div><div class="chs">هدف: gap واقعی پیدا کن</div></div>
+        <svg id="cfChev2" class="cf-chev"><use href="#ic-chevron"/></svg>
       </div>
-      <div class="cb">
+      <div class="cb cf-cb-closed" id="cfCb2">
         <div style="font-weight:700;color:var(--txt2);margin-bottom:8px;font-size:.72rem">✦ سوالات پیشنهادی:</div>
         ${tmpl.explore.map((q,i) => `
           <div style="background:var(--sur2);border-radius:10px;padding:10px 13px;margin-bottom:6px;font-size:.82rem;color:var(--txt);border:1px solid var(--brd)">
@@ -6571,11 +6586,12 @@ function renderCallFlow(tmpl, prod, visitType) {
 
     <!-- PRESENT -->
     <div class="card" style="margin-bottom:0">
-      <div class="ch" style="background:var(--grn-bg)">
+      <div class="ch cf-ch-btn" style="background:var(--grn-bg)" onclick="toggleCFCard(3)">
         <div class="chi" style="background:rgba(5,150,105,.2);width:28px;height:28px;min-width:28px;font-size:.75rem;font-weight:900;color:var(--grn)">۳</div>
         <div><div class="cht" style="color:var(--grn)">PRESENT — ارائه (۶۰-۹۰ ثانیه)</div><div class="chs">هدف: solution + evidence</div></div>
+        <svg id="cfChev3" class="cf-chev"><use href="#ic-chevron"/></svg>
       </div>
-      <div class="cb">
+      <div class="cb cf-cb-closed" id="cfCb3">
         <div style="font-weight:700;color:var(--txt2);margin-bottom:8px;font-size:.72rem">✦ محورهای ارائه:</div>
         ${tmpl.focus.map(f => `
           <div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:6px;font-size:.82rem;color:var(--txt)">
@@ -6593,11 +6609,12 @@ function renderCallFlow(tmpl, prod, visitType) {
 
     <!-- RESPOND -->
     <div class="card" style="margin-bottom:0">
-      <div class="ch" style="background:var(--ora-bg)">
+      <div class="ch cf-ch-btn" style="background:var(--ora-bg)" onclick="toggleCFCard(4)">
         <div class="chi" style="background:rgba(217,119,6,.2);width:28px;height:28px;min-width:28px;font-size:.75rem;font-weight:900;color:var(--ora)">۴</div>
         <div><div class="cht" style="color:var(--ora)">RESPOND — رفع اعتراض</div><div class="chs">هدف: موانع رو بردار</div></div>
+        <svg id="cfChev4" class="cf-chev"><use href="#ic-chevron"/></svg>
       </div>
-      <div class="cb">
+      <div class="cb cf-cb-closed" id="cfCb4">
         <div style="font-weight:700;color:var(--txt2);margin-bottom:8px;font-size:.72rem">✦ اعتراضات رایج این تخصص:</div>
         ${tmpl.objections.map(obj => `
           <div style="border:1px solid var(--brd);border-radius:10px;overflow:hidden;margin-bottom:8px">
@@ -6619,11 +6636,12 @@ function renderCallFlow(tmpl, prod, visitType) {
 
     <!-- COMMIT -->
     <div class="card" style="margin-bottom:0">
-      <div class="ch" style="background:var(--pur-bg)">
+      <div class="ch cf-ch-btn" style="background:var(--pur-bg)" onclick="toggleCFCard(5)">
         <div class="chi" style="background:rgba(109,40,217,.2);width:28px;height:28px;min-width:28px;font-size:.75rem;font-weight:900;color:var(--pur1)">۵</div>
         <div><div class="cht" style="color:var(--pur)">COMMIT — تعهد (۳۰ ثانیه)</div><div class="chs">هدف: یه action واقعی بگیر</div></div>
+        <svg id="cfChev5" class="cf-chev"><use href="#ic-chevron"/></svg>
       </div>
-      <div class="cb">
+      <div class="cb cf-cb-closed" id="cfCb5">
         <div style="font-weight:700;color:var(--txt2);margin-bottom:8px;font-size:.72rem">✦ درخواست اصلی:</div>
         <div style="background:var(--pur-bg);border:1px solid rgba(109,40,217,.2);border-radius:10px;padding:12px 14px;font-size:.86rem;font-weight:700;color:var(--pur1)">${tmpl.commit}</div>
         <div style="font-weight:700;color:var(--txt2);margin:10px 0 6px;font-size:.72rem">✦ اگه جواب نداد (Fallback):</div>
