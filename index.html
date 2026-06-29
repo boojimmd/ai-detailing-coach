@@ -6756,20 +6756,46 @@ function selAddProdTab(idx, btn) {
 }
 
 async function handleApFile(e) {
-  const file = e.target.files[0]; if (!file) return;
+  const file = e.target.files[0];
+  if (!file) {
+    // Bug-hunt fix: if the native picker fires `change` with no file (e.g. user
+    // cancelled, or some mobile browsers fire an empty event first), make that
+    // visible instead of silently doing nothing — matches the "selected but
+    // nothing happened" symptom reported.
+    toast('فایلی انتخاب نشد — دوباره امتحان کن', 'err');
+    return;
+  }
   if (file.size > 4 * 1024 * 1024) {
     toast('فایل بزرگتر از ۴MB است — عکس‌های صفحه کاتالوگ رو جداگانه آپلود کن', 'err');
     e.target.value = '';
     return;
   }
+
+  // Bug-hunt fix: previously there was NO feedback at all while the file was
+  // being read (FileReader + base64 encoding of a multi-MB PDF can take a
+  // few real seconds on a phone) — on a slower device this looked exactly
+  // like "nothing happened". Show an immediate, visible loading state.
+  const zone = document.getElementById('apUpzone');
+  const originalZoneHTML = zone.innerHTML;
+  zone.innerHTML = `
+    <div class="upzone-ic"><div class="spin dark" style="width:28px;height:28px;border-width:3px;margin:0 auto"></div></div>
+    <div class="upzone-txt">در حال خواندن فایل...</div>
+    <div class="upzone-sub">${file.name}</div>
+  `;
+
   try {
     apFileData = await readFileAsBase64(file);
     document.getElementById('apFileName').textContent = file.name;
     document.getElementById('apFilePreview').classList.remove('hidden');
-    document.getElementById('apUpzone').style.display = 'none';
+    zone.style.display = 'none';
+    zone.innerHTML = originalZoneHTML; // restore for if the file gets cleared later
     document.getElementById('btnAnalyzeCatalog').classList.remove('hidden');
     document.getElementById('btnAnalyzeCatalog').onclick = analyzeCatalog;
-  } catch(e) { toast('خطا در خواندن فایل', 'err'); }
+  } catch(err) {
+    zone.innerHTML = originalZoneHTML;
+    toast('خطا در خواندن فایل: ' + err.message, 'err');
+    console.error('handleApFile failed:', err);
+  }
 }
 
 function clearApFile() {
@@ -6877,20 +6903,37 @@ function selCsMode(idx, btn) {
 }
 
 async function handleCsBrochure(e) {
-  const file = e.target.files[0]; if (!file) return;
+  const file = e.target.files[0];
+  if (!file) { toast('فایلی انتخاب نشد — دوباره امتحان کن', 'err'); return; }
   if (file.size > 4 * 1024 * 1024) {
     toast('فایل بزرگتر از ۴MB است — یه صفحه از Brochure رو آپلود کن', 'err');
     e.target.value = '';
     return;
   }
+
+  // Same fix as handleApFile: visible loading state while a multi-MB file
+  // is being read, instead of looking like nothing happened.
+  const zone = document.getElementById('csBrochureZone');
+  const originalZoneHTML = zone.innerHTML;
+  zone.innerHTML = `
+    <div class="upzone-ic"><div class="spin dark" style="width:28px;height:28px;border-width:3px;margin:0 auto"></div></div>
+    <div class="upzone-txt">در حال خواندن فایل...</div>
+    <div class="upzone-sub">${file.name}</div>
+  `;
+
   try {
     csBrochureData = await readFileAsBase64(file);
     document.getElementById('csBrochureName').textContent = file.name;
     document.getElementById('csBrochurePreview').classList.remove('hidden');
-    document.getElementById('csBrochureZone').style.display = 'none';
+    zone.style.display = 'none';
+    zone.innerHTML = originalZoneHTML;
     document.getElementById('btnReadBrochure').classList.remove('hidden');
     document.getElementById('btnReadBrochure').onclick = readBrochure;
-  } catch(e) { toast('خطا در خواندن فایل', 'err'); }
+  } catch(err) {
+    zone.innerHTML = originalZoneHTML;
+    toast('خطا در خواندن فایل: ' + err.message, 'err');
+    console.error('handleCsBrochure failed:', err);
+  }
 }
 
 function clearCsBrochure() {
