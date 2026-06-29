@@ -33,6 +33,19 @@ export default {
       if (path === '/ping') {
         return respond({ ok: true, version: '3.1', storage: !!env.DATA_STORE });
       }
+      if (path === '/status') {
+        return respond({
+          version: '3.1',
+          keys: {
+            gemini:        !!env.GEMINI_KEY,
+            groq:          !!env.GROQ_KEY,
+            deepseek:      !!env.DEEPSEEK_KEY,
+            github_models: !!env.GITHUB_MODELS_KEY,
+            claude:        !!env.CLAUDE_KEY,
+          },
+          storage: !!env.DATA_STORE,
+        });
+      }
       return respond({ error: 'not found' }, 404);
     } catch (err) {
       return respond({ error: err.message }, 500);
