@@ -31,11 +31,11 @@ export default {
         return await handleAI(body, env);
       }
       if (path === '/ping') {
-        return respond({ ok: true, version: '3.3', storage: !!env.DATA_STORE });
+        return respond({ ok: true, version: '3.4', storage: !!env.DATA_STORE });
       }
       if (path === '/status') {
         return respond({
-          version: '3.3',
+          version: '3.4',
           keys: {
             groq:          !!env.GROQ_KEY,
             deepseek:      !!env.DEEPSEEK_KEY,
@@ -64,6 +64,26 @@ async function safeJson(res) {
     throw new Error(text.slice(0, 120).trim());
   }
 }
+// Removes invalid JSON characters (control chars, broken \u escapes)
+// that can appear in Persian/Arabic text input
+function sanitize(str) {
+  if (typeof str !== 'string') return String(str || '');
+  return str
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, ' ')
+    .replace(/\\u(?![0-9A-Fa-f]{4})/g, '\\\\u');
+}
+
+function buildMessages(system, messages) {
+  return [
+    { role: 'system', content: sanitize(system) },
+    ...messages.map(m => ({
+      role: m.role,
+      content: sanitize(typeof m.content === 'string' ? m.content : JSON.stringify(m.content))
+    }))
+  ];
+}
+
+
 
 // ═══════════════════════════════════════════════════
 //  DATA STORAGE (Cloudflare KV)
@@ -169,13 +189,7 @@ async function callGroq(system, messages, key) {
     },
     body: JSON.stringify({
       model: 'llama3-70b-8192',
-      messages: [
-        { role: 'system', content: system },
-        ...messages.map(m => ({
-          role: m.role,
-          content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content)
-        }))
-      ],
+      messages: buildMessages(system, messages),
       max_tokens: 3000,
       temperature: 0.8
     })
@@ -197,13 +211,7 @@ async function callDeepSeek(system, messages, key) {
     },
     body: JSON.stringify({
       model: 'deepseek-chat',
-      messages: [
-        { role: 'system', content: system },
-        ...messages.map(m => ({
-          role: m.role,
-          content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content)
-        }))
-      ],
+      messages: buildMessages(system, messages),
       max_tokens: 3000,
       temperature: 0.8
     })
@@ -227,13 +235,7 @@ async function callGitHubModels(system, messages, key) {
     },
     body: JSON.stringify({
       model: 'openai/gpt-4o',
-      messages: [
-        { role: 'system', content: system },
-        ...messages.map(m => ({
-          role: m.role,
-          content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content)
-        }))
-      ],
+      messages: buildMessages(system, messages),
       max_tokens: 3000,
       temperature: 0.8
     })
