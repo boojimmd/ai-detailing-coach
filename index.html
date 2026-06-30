@@ -538,6 +538,7 @@ input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-ca
 .cf-persona-note strong{color:var(--pur1);font-weight:800;}
 
 </style>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 </head>
 <body>
 
@@ -6763,8 +6764,10 @@ async function geminiWithFile(sys, msg, base64, mimeType) {
   return data.text;
 }
 
-// ═══ ADD PRODUCT — CATALOG UPLOAD ═══
-let apFileData = null;
+// ═══ ADD PRODUCT — CATALOG UPLOAD (Tesseract OCR + AI analysis) ═══
+let apFileData  = null; // base64 (fallback for vision AI)
+let apOcrText   = null; // extracted text via Tesseract (preferred path)
+let apFileName_ = '';
 
 function selAddProdTab(idx, btn) {
   document.querySelectorAll('#addProdOv .ctab').forEach(b => b.classList.remove('on'));
@@ -6773,42 +6776,95 @@ function selAddProdTab(idx, btn) {
   document.getElementById('apTab1').classList.toggle('hidden', idx !== 1);
 }
 
+// ── OCR a single canvas with Tesseract ───────────────────────────
+async function ocrCanvas(canvas) {
+  if (typeof Tesseract === 'undefined') throw new Error('Tesseract.js بارگذاری نشده');
+  const result = await Tesseract.recognize(canvas, 'fas+eng', { logger: () => {} });
+  return result.data.text || '';
+}
+
+// ── Render PDF pages → OCR text ──────────────────────────────────
+async function ocrPdf(arrayBuffer) {
+  // Load PDF.js dynamically if not yet loaded
+  if (!window.pdfjsLib) {
+    await new Promise((res, rej) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.js';
+      s.onload = res; s.onerror = rej;
+      document.head.appendChild(s);
+    });
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.js';
+  }
+  const pdf   = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const pages = Math.min(pdf.numPages, 4); // max 4 pages for speed
+  const texts = [];
+  for (let i = 1; i <= pages; i++) {
+    const page     = await pdf.getPage(i);
+    const viewport = page.getViewport({ scale: 2 });
+    const canvas   = document.createElement('canvas');
+    canvas.width   = viewport.width;
+    canvas.height  = viewport.height;
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+    texts.push(await ocrCanvas(canvas));
+  }
+  return texts.join('\n\n');
+}
+
 async function handleApFile(e) {
   const file = e.target.files[0];
-  if (!file) {
-    // Bug-hunt fix: if the native picker fires `change` with no file (e.g. user
-    // cancelled, or some mobile browsers fire an empty event first), make that
-    // visible instead of silently doing nothing — matches the "selected but
-    // nothing happened" symptom reported.
-    toast('فایلی انتخاب نشد — دوباره امتحان کن', 'err');
-    return;
-  }
-  if (file.size > 4 * 1024 * 1024) {
-    toast('فایل بزرگتر از ۴MB است — عکس‌های صفحه کاتالوگ رو جداگانه آپلود کن', 'err');
-    e.target.value = '';
-    return;
+  if (!file) { toast('فایلی انتخاب نشد — دوباره امتحان کن', 'err'); return; }
+  if (file.size > 8 * 1024 * 1024) {
+    toast('فایل بزرگتر از ۸MB است', 'err');
+    e.target.value = ''; return;
   }
 
-  // Bug-hunt fix: previously there was NO feedback at all while the file was
-  // being read (FileReader + base64 encoding of a multi-MB PDF can take a
-  // few real seconds on a phone) — on a slower device this looked exactly
-  // like "nothing happened". Show an immediate, visible loading state.
-  const zone = document.getElementById('apUpzone');
+  apFileName_ = file.name;
+  apOcrText   = null;
+  apFileData  = null;
+
+  const zone            = document.getElementById('apUpzone');
   const originalZoneHTML = zone.innerHTML;
-  zone.innerHTML = `
-    <div class="upzone-ic"><div class="spin dark" style="width:28px;height:28px;border-width:3px;margin:0 auto"></div></div>
-    <div class="upzone-txt">در حال خواندن فایل...</div>
-    <div class="upzone-sub">${file.name}</div>
-  `;
+
+  const setStatus = (msg) => {
+    zone.innerHTML = `
+      <div class="upzone-ic"><div class="spin dark" style="width:28px;height:28px;border-width:3px;margin:0 auto"></div></div>
+      <div class="upzone-txt">${msg}</div>
+      <div class="upzone-sub">${file.name}</div>`;
+  };
 
   try {
-    apFileData = await readFileAsBase64(file);
-    document.getElementById('apFileName').textContent = file.name;
+    const isPdf = file.type === 'application/pdf';
+    setStatus('در حال خواندن فایل...');
+
+    if (isPdf) {
+      // PDF → PDF.js → canvas → Tesseract
+      setStatus('در حال استخراج متن از PDF...');
+      const buf  = await file.arrayBuffer();
+      apOcrText  = await ocrPdf(buf);
+      // Also keep base64 as fallback for vision AI
+      apFileData = await readFileAsBase64(file);
+    } else {
+      // Image → Tesseract directly
+      setStatus('در حال خواندن متن از عکس...');
+      const imgUrl = URL.createObjectURL(file);
+      if (typeof Tesseract !== 'undefined') {
+        const result = await Tesseract.recognize(imgUrl, 'fas+eng', { logger: () => {} });
+        apOcrText = result.data.text || '';
+        URL.revokeObjectURL(imgUrl);
+      }
+      apFileData = await readFileAsBase64(file);
+    }
+
+    const hasText = apOcrText && apOcrText.trim().length > 30;
+    document.getElementById('apFileName').textContent =
+      file.name + (hasText ? ' ✅ متن استخراج شد' : ' ⚠️ متن کم — AI مستقیم می‌خونه');
     document.getElementById('apFilePreview').classList.remove('hidden');
-    zone.style.display = 'none';
-    zone.innerHTML = originalZoneHTML; // restore for if the file gets cleared later
+    zone.style.display  = 'none';
+    zone.innerHTML      = originalZoneHTML;
     document.getElementById('btnAnalyzeCatalog').classList.remove('hidden');
     document.getElementById('btnAnalyzeCatalog').onclick = analyzeCatalog;
+
   } catch(err) {
     zone.innerHTML = originalZoneHTML;
     toast('خطا در خواندن فایل: ' + err.message, 'err');
@@ -6817,7 +6873,9 @@ async function handleApFile(e) {
 }
 
 function clearApFile() {
-  apFileData = null;
+  apFileData  = null;
+  apOcrText   = null;
+  apFileName_ = '';
   document.getElementById('apFilePreview').classList.add('hidden');
   document.getElementById('apUpzone').style.display = 'block';
   document.getElementById('btnAnalyzeCatalog').classList.add('hidden');
@@ -6825,16 +6883,14 @@ function clearApFile() {
 }
 
 async function analyzeCatalog() {
-  if (!apFileData) { toast('فایل آپلود کن', 'err'); return; }
+  if (!apFileData && !apOcrText) { toast('فایل آپلود کن', 'err'); return; }
   const btn = document.getElementById('btnAnalyzeCatalog');
   btn.disabled = true;
-  btn.innerHTML = '<div class="spin"></div> در حال استخراج...';
+  btn.innerHTML = '<div class="spin"></div> در حال تحلیل...';
 
   try {
     const sys = 'تو متخصص داروشناسی هستی. از کاتالوگ دارویی اطلاعات دقیق استخراج می‌کنی.';
-    const msg = `این کاتالوگ دارو رو بخون و اطلاعات زیر رو استخراج کن:
-
-BRAND: [نام برند]
+    const fields = `BRAND: [نام برند]
 ING: [ماده موثره]
 IND: [اندیکاسیون اصلی]
 SPEC: [تخصص هدف]
@@ -6845,9 +6901,26 @@ SIDEEFFECT: [مهم‌ترین عارضه]
 DOSE: [دوز استاندارد]
 PATIENT: [بیمار ایده‌آل]
 
-اگه اطلاعاتی در فایل نبود، [نامشخص] بنویس.`;
+اگه اطلاعاتی پیدا نشد، [نامشخص] بنویس.`;
 
-    const text = await geminiWithFile(sys, msg, apFileData.base64, apFileData.mimeType);
+    let text;
+
+    if (apOcrText && apOcrText.trim().length > 30) {
+      // ── مسیر اصلی: متن OCR شده → AI متنی (همه cascade کار می‌کنه) ──
+      const msg = `متن زیر از کاتالوگ یه دارو استخراج شده. اطلاعات رو استخراج کن:
+
+${apOcrText.slice(0,3000)}
+
+${fields}`;
+      text = await gemini(sys, msg);
+    } else {
+      // ── مسیر پشتیبان: فایل مستقیم → Vision AI ──
+      btn.innerHTML = '<div class="spin"></div> ارسال به AI بینایی...';
+      const msg = `این کاتالوگ دارو رو بخون و اطلاعات زیر رو استخراج کن:
+
+${fields}`;
+      text = await geminiWithFile(sys, msg, apFileData.base64, apFileData.mimeType);
+    }
 
     const get = key => (text.match(new RegExp(key + ':\\s*([^\\n]+)')) || [])[1]?.trim() || '';
 
