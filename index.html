@@ -2066,6 +2066,7 @@ function renderDoctors() {
       <div class="doc-info">
         <div class="doc-name">${d.name}</div>
         <div class="doc-spec">${specLabel(d.spec)}${d.note?' · '+d.note.slice(0,30)+'...':''}</div>
+        ${renderDoctorPatternBadge(d)}
       </div>
       <button onclick="delDoc(${i})" style="background:none;border:none;cursor:pointer;padding:6px;display:flex;color:var(--txt3)">
         <svg width="16" height="16"><use href="#ic-trash"/></svg>
@@ -2823,7 +2824,8 @@ function openVisitList(docIdx) {
   if(!visits.length) {
     el.innerHTML = '<div class="empty"><div class="empty-txt">هنوز ویزیتی ثبت نشده</div></div>';
   } else {
-    el.innerHTML = visits.slice().reverse().map((v,i) => `
+    const patternHtml = renderDoctorPatternBadge(doc);
+    el.innerHTML = (patternHtml ? `<div style="margin-bottom:10px">${patternHtml}</div>` : '') + visits.slice().reverse().map((v,i) => `
       <div style="background:var(--sur2);border-radius:10px;padding:12px 14px;margin-bottom:8px;border:1px solid var(--brd)">
         <div style="display:flex;justify-content:space-between;align-items:center">
           <div style="font-weight:800;color:var(--txt);font-size:.86rem">${v.prodName}</div>
@@ -6641,7 +6643,10 @@ function getPersonaObjections(doc) {
   const objections = [];
   const pers = (doc.personality || doc.pers || '').toLowerCase();
   const note = (doc.note || '').toLowerCase();
-  const combined = pers + ' ' + note;
+  // فاز ۵: متن اعتراض‌های واقعی ثبت‌شده توی ویزیت‌های قبلی رو هم به منبع تشخیص اضافه می‌کنیم
+  // — یعنی الگوی واقعی رفتار پزشک، نه فقط برچسبی که دستی روش گذاشتیم.
+  const realObjections = (doc.visits || []).map(v => v.objection || '').filter(Boolean).join(' ').toLowerCase();
+  const combined = pers + ' ' + note + ' ' + realObjections;
 
   if (combined.match(/قیمت|هزینه|گرون|مالی/)) {
     objections.push({
@@ -6667,8 +6672,61 @@ function getPersonaObjections(doc) {
       a: 'یه عدد: [مهم‌ترین outcome number]. همین کافیه؟'
     });
   }
+  if (combined.match(/عارضه|safety|ایمنی|خطر/)) {
+    objections.push({
+      q: 'نگران عوارض جانبی هستم برای بیمارام',
+      a: 'safety profile رو دقیق مرور کردیم — عوارض شایع معمولاً خفیف و گذرا هستن، و monitoring لازم رو هم می‌تونیم با هم برنامه‌ریزی کنیم.'
+    });
+  }
 
   return objections.slice(0, 2); // max 2 persona objections
+}
+
+// فاز ۵: تشخیص الگوی رفتاری پزشک از روی تاریخچه واقعی ویزیت‌ها — بدون نیاز به AI،
+// سریع و قطعی. اگه داده کافی نباشه null برمی‌گردونه.
+function inferDoctorPattern(doc) {
+  const visits = doc.visits || [];
+  if (visits.length < 2) return null;
+
+  const themes = {
+    'حساس به قیمت': /قیمت|هزینه|گرون|مالی/,
+    'evidence-محور': /مقاله|evidence|مطالعه|data|رفرنس/,
+    'وفادار به رقیب': /رقیب|وفادار|سال‌هاست/,
+    'کم‌وقت': /عجول|وقت|پرمشغله|سریع/,
+    'نگران ایمنی': /عارضه|safety|ایمنی|خطر/,
+  };
+
+  const counts = {};
+  visits.forEach(v => {
+    if (!v.objection) return;
+    for (const [theme, re] of Object.entries(themes)) {
+      if (re.test(v.objection)) counts[theme] = (counts[theme] || 0) + 1;
+    }
+  });
+
+  const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  const topTheme = sorted.length ? sorted[0] : null;
+
+  const outcomes = visits.map(v => v.outcome).filter(Boolean);
+  const positive = outcomes.filter(o => o === 'positive').length;
+  const winRate = outcomes.length ? Math.round((positive / outcomes.length) * 100) : null;
+
+  return {
+    visitCount: visits.length,
+    topTheme: topTheme ? topTheme[0] : null,
+    topThemeCount: topTheme ? topTheme[1] : 0,
+    winRate,
+  };
+}
+
+function renderDoctorPatternBadge(doc) {
+  const p = inferDoctorPattern(doc);
+  if (!p) return '';
+  const parts = [];
+  if (p.topTheme) parts.push(`📊 الگو: ${p.topTheme} (${p.topThemeCount}/${p.visitCount} ویزیت)`);
+  if (p.winRate != null) parts.push(`✅ نرخ موفقیت: ${p.winRate}٪`);
+  if (!parts.length) return '';
+  return `<div style="font-size:.68rem;color:var(--pur1);margin-top:4px;background:var(--pur-bg);display:inline-block;padding:2px 8px;border-radius:6px">${parts.join(' · ')}</div>`;
 }
 
 // ═══ CALL FLOW ═══
