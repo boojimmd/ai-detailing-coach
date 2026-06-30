@@ -31,11 +31,11 @@ export default {
         return await handleAI(body, env);
       }
       if (path === '/ping') {
-        return respond({ ok: true, version: '3.9', storage: !!env.DATA_STORE });
+        return respond({ ok: true, version: '4.0', storage: !!env.DATA_STORE });
       }
       if (path === '/status') {
         return respond({
-          version: '3.9',
+          version: '4.0',
           keys: {
             cf_workers_ai: !!env.AI,
             groq:          !!env.GROQ_KEY,
@@ -121,12 +121,58 @@ async function handleData(request, url, env) {
 }
 
 // ═══════════════════════════════════════════════════
+//  WEB SEARCH GROUNDING (DuckDuckGo HTML — بدون نیاز به کلید)
+//  برای سوالاتی مثل «رقبای این دارو در ایران» یا «محصولات این کمپانی»
+//  که نباید فقط بر اساس دانش training مدل جواب داده بشن.
+// ═══════════════════════════════════════════════════
+async function webSearch(query, maxResults = 5) {
+  const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+  const res = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+    },
+  });
+  if (!res.ok) throw new Error(`جستجوی وب ناموفق (HTTP ${res.status})`);
+  const html = await res.text();
+
+  // استخراج عنوان + خلاصه هر نتیجه با regex (Workers به DOMParser دسترسی نداره)
+  const results = [];
+  const blockRe = /<a[^>]*class="result__a"[^>]*>(.*?)<\/a>[\s\S]*?<a[^>]*class="result__snippet"[^>]*>(.*?)<\/a>/g;
+  let m;
+  const strip = (s) => s.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&#x27;/g, "'").replace(/&quot;/g, '"').trim();
+  while ((m = blockRe.exec(html)) && results.length < maxResults) {
+    const title = strip(m[1]);
+    const snippet = strip(m[2]);
+    if (title) results.push({ title, snippet });
+  }
+  return results;
+}
+
+function buildGroundingContext(results, query) {
+  if (!results.length) return '';
+  const lines = results.map((r, i) => `${i + 1}. ${r.title}\n   ${r.snippet}`).join('\n');
+  return `\n\n[نتایج جستجوی وب برای «${query}» — ${new Date().toISOString().slice(0,10)}]\n${lines}\n\nاز این نتایج به‌عنوان منبع داده واقعی و به‌روز استفاده کن. اگه نتایج کافی نبود یا نامرتبط بود، صراحتاً بگو اطلاعات کافی پیدا نشد به‌جای حدس زدن.\n`;
+}
+
+// ═══════════════════════════════════════════════════
 //  AI FALLBACK CASCADE
 // ═══════════════════════════════════════════════════
-async function handleAI({ system, messages, fallbackQuery }, env) {
+async function handleAI({ system, messages, fallbackQuery, groundQuery }, env) {
   // Vision requests (image/PDF) → dedicated vision handler
   if (isVisionRequest(messages)) {
     return await handleVision({ system, messages }, env);
+  }
+
+  // اگه groundQuery داده شده، اول جستجوی وب رو انجام بده و به system prompt اضافه کن
+  // (non-fatal — اگه جستجو fail بشه، با همون system prompt قبلی ادامه می‌ده)
+  if (groundQuery) {
+    try {
+      const results = await webSearch(groundQuery);
+      system = system + buildGroundingContext(results, groundQuery);
+    } catch (e) {
+      // جستجو fail شد — بدون grounding ادامه بده، کرش نکن
+      system = system + `\n\n[توجه: جستجوی وب برای «${groundQuery}» ناموفق بود — بر اساس دانش داخلی جواب بده و صراحتاً بگو ممکنه به‌روز نباشه.]\n`;
+    }
   }
 
   const errors = [];
