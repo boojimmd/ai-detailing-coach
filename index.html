@@ -895,8 +895,15 @@ input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-ca
         <input class="fi" id="apIngredient" placeholder="مثال: تیرزپاتید، متفورمین، آتورواستاتین">
         <div class="fi-hint">AI از دانش خودش پروفایل کامل می‌سازه</div>
       </div>
-      <div class="fgroup"><label class="fl">اندیکاسیون هدف</label><input class="fi" id="apIndication" placeholder="مثال: چاقی + دیابت نوع ۲"></div>
-      <div class="fgroup"><label class="fl">تخصص هدف</label><input class="fi" id="apSpecialty" placeholder="مثال: غدد، کاردیولوژی، داخلی"></div>
+      <div class="fgroup"><label class="fl">اندیکاسیون هدف</label>
+        <input class="fi" id="apIndication" list="apIndicationList" placeholder="مثال: چاقی + دیابت نوع ۲">
+        <datalist id="apIndicationList"></datalist>
+      </div>
+      <div class="fgroup"><label class="fl">تخصص هدف</label>
+        <select class="fi" id="apSpecialty" style="cursor:pointer" onchange="onApSpecialtyChange()">
+          <option value="">— انتخاب نکن —</option>
+        </select>
+      </div>
       <button class="btn" id="btnAnalyzeProd"><svg><use href="#ic-brain"/></svg>تحلیل با AI</button>
     </div>
 
@@ -938,7 +945,9 @@ input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-ca
     </div>
     <div class="fgroup">
       <label class="fl">تخصص <span style="color:var(--red)">*</span></label>
-      <input class="fi" id="docSpec" placeholder="مثال: کاردیولوژیست، متخصص غدد">
+      <select class="fi" id="docSpec" style="cursor:pointer">
+        <option value="">— انتخاب کن —</option>
+      </select>
     </div>
     <div class="fgroup">
       <label class="fl">شخصیت و رفتار (اختیاری)</label>
@@ -970,12 +979,6 @@ input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-ca
       <label class="fl">تخصص پزشک (اختیاری)</label>
       <select class="fi" id="selSpecialty" style="cursor:pointer">
         <option value="">— انتخاب نکن —</option>
-        <option value="endocrine">غدد — تمرکز: کاهش وزن، HbA1c</option>
-        <option value="cardiology">کاردیولوژی — تمرکز: MACE، CV safety</option>
-        <option value="nephrology">نفرولوژی — تمرکز: CKD، eGFR safety</option>
-        <option value="obgyn">OB/GYN — تمرکز: PCOS، بارداری</option>
-        <option value="internal">داخلی — تمرکز: comorbidity</option>
-        <option value="nutrition">تغذیه — تمرکز: رژیم، lifestyle</option>
       </select>
     </div>
     <div id="selMethodSection">
@@ -1597,6 +1600,7 @@ function init() {
   try { renderProducts(); } catch(e){ console.log(e); }
   try { renderDoctors(); } catch(e){ console.log(e); }
   try { buildArchetypes(); buildMethods(); } catch(e){}
+  try { populateSpecialtySelects(); } catch(e){}
   try { updateStats(); } catch(e){}
   try { setupVoice(); } catch(e){}
   try { showSyncCode(); } catch(e){}
@@ -1925,7 +1929,7 @@ async function analyzeProd() {
   ['apBrand','apIngredient','apIndication','apSpecialty'].forEach(id => document.getElementById(id).value='');
 
   try {
-    const { sys, msg } = buildProductAnalysisPrompt(brand, ingredient, indication, specialty);
+    const { sys, msg } = buildProductAnalysisPrompt(brand, ingredient, indication, specLabel(specialty));
     const analysis = await gemini(sys, msg, [], [], ingredient);
     prod.analysis = analysis;
     saveData();
@@ -1952,7 +1956,7 @@ async function retryProdAnalysis(i, btnEl) {
   const original = btn ? btn.innerHTML : '';
   if (btn) { btn.disabled = true; btn.innerHTML = '<div class="spin"></div>'; }
   try {
-    const { sys, msg } = buildProductAnalysisPrompt(prod.brand, prod.ingredient, prod.indication, prod.specialty);
+    const { sys, msg } = buildProductAnalysisPrompt(prod.brand, prod.ingredient, prod.indication, specLabel(prod.specialty));
     const analysis = await gemini(sys, msg, [], [], prod.ingredient);
     prod.analysis = analysis;
     saveData();
@@ -1987,7 +1991,7 @@ function renderDoctors() {
       <div class="doc-av"><svg width="22" height="22"><use href="#ic-doctor"/></svg></div>
       <div class="doc-info">
         <div class="doc-name">${d.name}</div>
-        <div class="doc-spec">${d.spec}${d.note?' · '+d.note.slice(0,30)+'...':''}</div>
+        <div class="doc-spec">${specLabel(d.spec)}${d.note?' · '+d.note.slice(0,30)+'...':''}</div>
       </div>
       <button onclick="delDoc(${i})" style="background:none;border:none;cursor:pointer;padding:6px;display:flex;color:var(--txt3)">
         <svg width="16" height="16"><use href="#ic-trash"/></svg>
@@ -2060,7 +2064,7 @@ function openSess(prodIdx, mode) {
     ? S.doctors.map((d,i) => `
         <div class="doc-card sdoc mb8" onclick="selSavedDoc(${i},this)">
           <div class="doc-av" style="width:36px;height:36px"><svg width="18" height="18"><use href="#ic-doctor"/></svg></div>
-          <div class="doc-info"><div class="doc-name" style="font-size:.84rem">${d.name}</div><div class="doc-spec">${d.spec}</div></div>
+          <div class="doc-info"><div class="doc-name" style="font-size:.84rem">${d.name}</div><div class="doc-spec">${specLabel(d.spec)}</div></div>
         </div>`).join('')
     : `<div style="font-size:.74rem;color:var(--txt3)">پزشک اختصاصی ذخیره نشده</div>`;
 
@@ -2090,7 +2094,7 @@ async function generateScript() {
   const prod = S.currentProd;
   const doc  = S.currentDoc || S.selectedArch;
   const docName = doc.name || doc.label;
-  const docDesc = doc.personality || doc.pers || doc.spec || '';
+  const docDesc = doc.personality || doc.pers || specLabel(doc.spec) || '';
 
   document.getElementById('scriptTitle').textContent = prod.brand || prod.ingredient;
   document.getElementById('scriptSub').textContent = `${docName} · ${S.selectedMethod} · ${S.selectedDiff}`;
@@ -2193,7 +2197,7 @@ async function startRoleplay() {
     hard: 'خیلی سخت‌گیر. به راحتی قانع نمی‌شی. objection داری.'
   };
 
-  const docPers = doc.pers || doc.personality || `تو یه ${doc.spec||'پزشک'} هستی.`;
+  const docPers = doc.pers || doc.personality || `تو یه متخصص ${specLabel(doc.spec)||'عمومی'} هستی.`;
   S.chatSys = `${docPers}
 سطح مقاومت: ${diffMap[S.selectedDiff]}
 محصولی که مدرپ می‌خواد معرفی کنه: ${prod.brand||prod.ingredient} (${prod.ingredient})
@@ -2390,7 +2394,7 @@ async function generateBriefing() {
   const prod = S.currentProd;
   const doc  = S.currentDoc || S.selectedArch;
   const docName = doc?.name || doc?.label || 'پزشک';
-  const docInfo = doc?.pers || doc?.personality || doc?.spec || doc?.desc || '';
+  const docInfo = doc?.pers || doc?.personality || specLabel(doc?.spec) || doc?.desc || '';
   const docNote = doc?.note || '';
 
   document.getElementById('briefingSub').textContent = `${prod?.brand||prod?.ingredient} × ${docName}`;
@@ -3085,11 +3089,23 @@ function saveReminder() {
 // ═══ SPECIALTY MODE ═══
 const SPECIALTY_HINTS = {
   endocrine: 'تخصص غدد — تمرکز روی: کاهش وزن ٪، HbA1c کاهش، دوز تیتراسیون. مثال: «برای بیمار با HbA1c>9 و BMI>35...»',
-  cardiology: 'تخصص کاردیولوژی — تمرکز روی: MACE outcome، CV safety، heart failure. SURMOUNT-CVOT data.',
-  nephrology: 'تخصص نفرولوژی — تمرکز روی: eGFR safety، CKD stage، دوز تنظیم در نارسایی کلیوی.',
-  obgyn: 'تخصص OB/GYN — تمرکز روی: PCOS، fertility، contraindication در بارداری.',
+  diabetes: 'تخصص دیابت — تمرکز روی: HbA1c target، هیپوگلیسمی، تیتراسیون انسولین/GLP-1، عوارض میکروواسکولار.',
+  nutrition: 'تخصص تغذیه و چاقی — تمرکز روی: lifestyle integration، plateau management، long-term adherence، BMI trajectory.',
+  cardiology: 'تخصص کاردیولوژی — تمرکز روی: MACE outcome، CV safety، heart failure، LDL target.',
+  hypertension: 'تخصص فشارخون — تمرکز روی: BP target (مثلاً <130/80)، combination therapy، ortostatic safety.',
+  nephrology: 'تخصص نفرولوژی — تمرکز روی: eGFR safety، CKD stage، دوز تنظیم در نارسایی کلیوی، آلبومینوری.',
+  urology: 'تخصص اورولوژی — تمرکز روی: BPH symptoms (IPSS score)، اختلال نعوظ، عملکرد مثانه.',
+  obgyn: 'تخصص زنان و مامایی — تمرکز روی: PCOS، contraindication در بارداری/شیردهی، سیکل قاعدگی.',
+  ivf: 'تخصص نازایی و IVF — تمرکز روی: تحریک تخمدان، کیفیت تخمک/جنین، OHSS risk، نرخ موفقیت سیکل.',
+  gp: 'تخصص پزشک عمومی — تمرکز روی: سادگی تجویز، safety profile کلی، cost-effectiveness، triage برای ارجاع.',
   internal: 'تخصص داخلی — تمرکز روی: comorbidity management، polypharmacy، cost-effectiveness.',
-  nutrition: 'تخصص تغذیه — تمرکز روی: lifestyle integration، plateau management، long-term adherence.',
+  pulmonology: 'تخصص ریه — تمرکز روی: FEV1/spirometry، تشدید (exacerbation)، تکنیک استنشاقی، GOLD/GINA stage.',
+  gastro: 'تخصص گوارش — تمرکز روی: علائم GI، آندوسکوپی/کولونوسکوپی findings، تداخل با سایر داروهای گوارشی.',
+  rheumatology: 'تخصص روماتولوژی — تمرکز روی: DAS28/فعالیت بیماری، عوارض ایمونوساپرسیو، monitoring آزمایشگاهی.',
+  psychiatry: 'تخصص روان‌پزشکی و نورولوژی — تمرکز روی: تداخل با سایر داروهای CNS، عوارض شناختی، adherence بیمار.',
+  ortho: 'تخصص ارتوپدی — تمرکز روی: کنترل درد، عملکرد مفصلی، ریکاوری بعد از جراحی، تداخل با NSAID.',
+  dermatology: 'تخصص پوست — تمرکز روی: severity scoring (مثل PASI)، عوارض پوستی، رضایت زیبایی‌شناختی بیمار.',
+  pediatrics: 'تخصص اطفال — تمرکز روی: دوز بر اساس وزن، safety profile در کودکان، طعم/فرمولاسیون قابل قبول.',
 };
 
 function getSpecialtyHint() {
@@ -3298,7 +3314,7 @@ function handleSearch(val) {
     .map((d,i) => ({...d, _i:i, _type:'doc'}))
     .filter(d =>
       normalizePersian(d.name).includes(q) ||
-      normalizePersian(d.spec).includes(q)
+      normalizePersian(specLabel(d.spec)).includes(q)
     );
 
   if(!prodResults.length && !docResults.length) {
@@ -3324,7 +3340,7 @@ function handleSearch(val) {
       <div class="search-result" onclick="clearSearch();openVisitList(${d._i})">
         <div class="search-result-type">👨‍⚕️ دکتر</div>
         <div class="search-result-name">${d.name}</div>
-        <div class="search-result-sub">${d.spec}</div>
+        <div class="search-result-sub">${specLabel(d.spec)}</div>
       </div>
     `).join('');
   }
@@ -6362,6 +6378,73 @@ const SPECIALTIES_LIST = [
   }
 ];
 
+// تبدیل id تخصص به برچسب فارسی — اگه id شناخته‌شده نبود (دیتای قدیمی متن‌آزاد)
+// همون مقدار قبلی رو برمی‌گردونه تا چیزی نشکنه.
+function specLabel(id) {
+  const s = SPECIALTIES_LIST.find(x => x.id === id);
+  return s ? s.label : (id || '');
+}
+
+// وقتی AI متن آزاد برای تخصص برمی‌گردونه (مثلاً از کاتالوگ آپلودی)، تلاش می‌کنه
+// نزدیک‌ترین id از ۱۸ تخصص استاندارد رو پیدا کنه. اگه چیزی پیدا نشد، متن خام برمی‌گرده
+// (specLabel با اون هم درست کار می‌کنه، فقط جزو تخصص‌های ساختاریافته نخواهد بود).
+function matchSpecialtyId(freeText) {
+  if (!freeText) return '';
+  const norm = normalizePersian(freeText);
+  const found = SPECIALTIES_LIST.find(s => norm.includes(normalizePersian(s.label)) || normalizePersian(s.label).includes(norm));
+  return found ? found.id : freeText;
+}
+
+// لیست اندیکاسیون‌های رایج به‌ازای هر تخصص — برای پیشنهاد (datalist)، نه محدودیت سخت.
+const INDICATIONS_BY_SPECIALTY = {
+  endocrine: ['دیابت نوع ۲', 'چاقی', 'کم‌کاری تیروئید', 'پرکاری تیروئید', 'سندرم متابولیک'],
+  diabetes: ['دیابت نوع ۱', 'دیابت نوع ۲', 'پیش‌دیابت', 'دیابت بارداری'],
+  nutrition: ['چاقی', 'اضافه‌وزن با کوموربیدیتی', 'سوءتغذیه', 'دیس‌لیپیدمی وابسته به رژیم'],
+  cardiology: ['نارسایی قلبی', 'فشارخون', 'آنژین صدری', 'دیس‌لیپیدمی', 'فیبریلاسیون دهلیزی'],
+  hypertension: ['فشارخون اولیه', 'فشارخون مقاوم', 'فشارخون بارداری'],
+  nephrology: ['بیماری مزمن کلیه (CKD)', 'نفروپاتی دیابتی', 'پروتئینوری', 'فشارخون وابسته به کلیه'],
+  urology: ['هیپرپلازی خوش‌خیم پروستات (BPH)', 'اختلال نعوظ', 'بی‌اختیاری ادرار', 'عفونت مجاری ادراری'],
+  obgyn: ['PCOS', 'یائسگی', 'اندومتریوز', 'پیشگیری از بارداری'],
+  ivf: ['نازایی با علت زنانه', 'نازایی با علت مردانه', 'تحریک تخمدان', 'نازایی با علت ناشناخته'],
+  gp: ['عفونت‌های شایع', 'مدیریت اولیه فشارخون/دیابت', 'سرماخوردگی و آنفولانزا', 'مدیریت درد خفیف'],
+  internal: ['کوموربیدیتی چندگانه', 'دیس‌لیپیدمی', 'پولی‌فارماسی سالمندان'],
+  pulmonology: ['آسم', 'COPD', 'فیبروز ریوی', 'آپنه خواب'],
+  gastro: ['ریفلاکس (GERD)', 'سندرم روده تحریک‌پذیر (IBS)', 'بیماری التهابی روده (IBD)', 'زخم پپتیک'],
+  rheumatology: ['آرتریت روماتوئید', 'استئوآرتریت', 'لوپوس', 'اسپوندیلیت آنکیلوزان'],
+  psychiatry: ['افسردگی', 'اضطراب', 'صرع', 'بی‌خوابی', 'میگرن'],
+  ortho: ['درد مزمن مفصلی', 'پوکی استخوان', 'آرتروز زانو', 'ریکاوری بعد از جراحی'],
+  dermatology: ['آکنه', 'پسوریازیس', 'اگزما/درماتیت آتوپیک', 'ریزش مو'],
+  pediatrics: ['عفونت‌های شایع کودکان', 'آسم کودکان', 'کم‌خونی فقر آهن', 'واکسیناسیون'],
+};
+
+// یک‌بار از init() صدا زده می‌شه — همه selectهای تخصص رو از منبع واحد SPECIALTIES_LIST پر می‌کنه
+function populateSpecialtySelects() {
+  const opts = SPECIALTIES_LIST.map(s => `<option value="${s.id}">${s.label}</option>`).join('');
+
+  const apSel = document.getElementById('apSpecialty');
+  if (apSel) apSel.innerHTML = '<option value="">— انتخاب نکن —</option>' + opts;
+
+  const docSel = document.getElementById('docSpec');
+  if (docSel) docSel.innerHTML = '<option value="">— انتخاب کن —</option>' + opts;
+
+  const roleplaySel = document.getElementById('selSpecialty');
+  if (roleplaySel) {
+    roleplaySel.innerHTML = '<option value="">— انتخاب نکن —</option>' +
+      SPECIALTIES_LIST.map(s => {
+        const hint = (SPECIALTY_HINTS[s.id] || '').split('—')[1]?.split('.')[0]?.trim() || '';
+        return `<option value="${s.id}">${s.label}${hint ? ' — ' + hint : ''}</option>`;
+      }).join('');
+  }
+}
+
+function onApSpecialtyChange() {
+  const specId = document.getElementById('apSpecialty').value;
+  const dl = document.getElementById('apIndicationList');
+  if (!dl) return;
+  const list = INDICATIONS_BY_SPECIALTY[specId] || [];
+  dl.innerHTML = list.map(x => `<option value="${x}"></option>`).join('');
+}
+
 function getCallFlow(specialtyId, stage) {
   const spec = CALL_FLOW_DB[specialtyId];
   if (!spec) return null;
@@ -6433,7 +6516,7 @@ function openCallFlow(prodIdx) {
   cfSelectedDocId = null;
   const docSel = document.getElementById('cfSavedDoc');
   docSel.innerHTML = '<option value="">— بدون پزشک اختصاصی —</option>' +
-    S.doctors.map((d,i) => `<option value="${i}">${d.name} — ${d.spec}</option>`).join('');
+    S.doctors.map((d,i) => `<option value="${i}">${d.name} — ${specLabel(d.spec)}</option>`).join('');
   docSel.value = '';
 
   // Auto-fill specialty if the chosen doctor's spec matches one of our SPECIALTIES_LIST
@@ -6521,7 +6604,7 @@ function renderCallFlow(tmpl, prod, visitType) {
   let personaSection = '';
   if (doc) {
     const docName = doc.name || doc.label || '';
-    const docDesc = doc.personality || doc.pers || doc.spec || doc.desc || '';
+    const docDesc = doc.personality || doc.pers || specLabel(doc.spec) || doc.desc || '';
     const docNote = doc.note || '';
     personaSection = `
       <div class="cf-persona">
@@ -6681,7 +6764,7 @@ async function aiEnhanceFlow(btnEl) {
     // Bug fix: include the explicitly-selected doctor (cfActiveDoc) so "AI Enhance"
     // actually personalizes to this physician, not just product+specialty.
     const docContext = cfActiveDoc
-      ? `\nپزشک: ${cfActiveDoc.name} — ${cfActiveDoc.spec}${cfActiveDoc.personality ? ' — ویژگی: ' + cfActiveDoc.personality : ''}${cfActiveDoc.note ? ' — یادداشت قبلی: ' + cfActiveDoc.note : ''}`
+      ? `\nپزشک: ${cfActiveDoc.name} — ${specLabel(cfActiveDoc.spec)}${cfActiveDoc.personality ? ' — ویژگی: ' + cfActiveDoc.personality : ''}${cfActiveDoc.note ? ' — یادداشت قبلی: ' + cfActiveDoc.note : ''}`
       : '';
 
     const msg = `این Call Flow رو برای محصول و تخصص خاص بهبود بده:
@@ -6992,7 +7075,7 @@ ${fields}`;
         brand: brand !== 'نامشخص' ? brand : '',
         ingredient: ing,
         indication: ind !== 'نامشخص' ? ind : '',
-        specialty: spec !== 'نامشخص' ? spec : '',
+        specialty: spec !== 'نامشخص' ? matchSpecialtyId(spec) : '',
         analysis,
         fromCatalog: true,
       };
