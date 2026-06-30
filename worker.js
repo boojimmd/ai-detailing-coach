@@ -31,11 +31,11 @@ export default {
         return await handleAI(body, env);
       }
       if (path === '/ping') {
-        return respond({ ok: true, version: '3.2', storage: !!env.DATA_STORE });
+        return respond({ ok: true, version: '3.3', storage: !!env.DATA_STORE });
       }
       if (path === '/status') {
         return respond({
-          version: '3.2',
+          version: '3.3',
           keys: {
             groq:          !!env.GROQ_KEY,
             deepseek:      !!env.DEEPSEEK_KEY,
@@ -168,7 +168,7 @@ async function callGroq(system, messages, key) {
       'Authorization': `Bearer ${key}`
     },
     body: JSON.stringify({
-      model: 'llama-3.3-70b-versatile',
+      model: 'llama3-70b-8192',
       messages: [
         { role: 'system', content: system },
         ...messages.map(m => ({
@@ -189,14 +189,14 @@ async function callGroq(system, messages, key) {
 }
 
 async function callDeepSeek(system, messages, key) {
-  const res = await fetch('https://api.openmodel.ai/v1/chat/completions', {
+  const res = await fetch('https://api.deepseek.com/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${key}`
     },
     body: JSON.stringify({
-      model: 'deepseek-v4-flash',
+      model: 'deepseek-chat',
       messages: [
         { role: 'system', content: system },
         ...messages.map(m => ({
