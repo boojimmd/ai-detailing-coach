@@ -1804,8 +1804,11 @@ async function gemini(sys, msg, history=[], imageParts=[], fallbackQuery=null, g
   const data = await res.json();
   if(data.error) throw new Error(data.error);
   if(!data.text) throw new Error('پاسخ دریافت نشد');
+  // برای دیباگ/شفافیت — کاربر می‌تونه بفهمه گراندینگ واقعاً اتفاق افتاده یا نه
+  lastGroundingInfo = { source: data.groundingSource || null, count: data.groundingCount || 0, aiSource: data.source || null };
   return data.text;
 }
+let lastGroundingInfo = { source: null, count: 0, aiSource: null };
 
 // ═══════════════ SAVE / LOAD ═══════════════
 let localEditedSinceLoad = false; // guards against loadFromCloud() clobbering a fresh local edit (see bug fix below)
@@ -4052,9 +4055,9 @@ async function searchCompany() {
   showCsState('loading');
 
   const sys = `تو یه متخصص دارویی هستی که اطلاعات جامع درباره کمپانی‌های دارویی داری.
-اطلاعاتت باید دقیق، به‌روز و مستند باشه.`;
+اطلاعاتت باید دقیق، به‌روز و مستند باشه. اگه نتایج جستجو محصول جدیدی نشون ندادن، صراحتاً بگو ممکنه لیست کامل نباشه — حدس الکی نزن.`;
 
-  const msg = `لیست کامل محصولات دارویی کمپانی "${company}" رو بده.
+  const msg = `لیست کامل محصولات دارویی کمپانی "${company}" رو بده — با تمرکز ویژه روی محصولات جدید و new launch های اخیر (نه فقط محصولات قدیمی و شناخته‌شده).
 
 برای هر محصول دقیقاً این فرمت رو استفاده کن:
 PRODUCT: [نام برند]
@@ -4067,12 +4070,12 @@ YEAR: [سال تأیید یا launch]
 
 مهم:
 - اگه کمپانی ایرانیه، محصولات ایرانی‌شو بنویس
-- new launch های اخیر رو هم بیار
+- new launch های ۱-۲ سال اخیر رو حتماً جدا و واضح علامت بزن (STATUS: new_launch)
 - همه محصولاتی که توی نتایج جستجو دیدی رو بدون حذف کردن لیست کن، نه فقط چندتای منتخب
 - اگه کمپانی رو نمی‌شناسی بنویس UNKNOWN`;
 
   try {
-    const groundQuery = `${company} دارویاب محصولات شرکت`;
+    const groundQuery = `${company} دارویاب تازه های دارویی محصول جدید`;
     const text = await gemini(sys, msg, [], [], null, groundQuery);
 
     if(text.includes('UNKNOWN')) {
@@ -4106,8 +4109,20 @@ YEAR: [سال تأیید یا launch]
 }
 
 function renderCsProducts(products, company) {
+  // نشون دادن منبع واقعی داده — اگه گراندینگ کار نکرده باشه، کاربر باید بدونه
+  // که این لیست از دانش AI ساخته شده، نه از یه منبع زنده.
+  const g = lastGroundingInfo;
+  let groundingNote = '';
+  if (!g.source || g.source === 'failed' || g.count === 0) {
+    groundingNote = `<div class="warn-box" style="margin-bottom:10px"><svg><use href="#ic-warn"/></svg>⚠️ این لیست از دانش داخلی AI ساخته شده (جستجوی زنده نتیجه‌ای نداد) — ممکنه شامل جدیدترین محصولات نباشه. دوباره امتحان کن یا اسم کمپانی رو دقیق‌تر بنویس.</div>`;
+  } else {
+    const srcLabel = { searxng: 'SearXNG', google: 'Google', duckduckgo: 'DuckDuckGo', 'cerita-local-db': 'دیتابیس محلی' }[g.source.split('+')[0]] || g.source;
+    groundingNote = `<div style="font-size:.68rem;color:var(--txt3);margin-bottom:10px">🔎 منبع: ${srcLabel} (${g.count} نتیجه) — اگه دارویی جدید توی لیست نمی‌بینی، دوباره جستجو کن، چون نتایج جستجو ممکنه بین بارها فرق کنه.</div>`;
+  }
+
   // Company header — uses app's card/ch design system
   document.getElementById('csCompanyHeader').innerHTML = `
+    ${groundingNote}
     <div class="card" style="margin-bottom:0">
       <div class="ch">
         <div class="chi" style="background:var(--sky-bg)">
