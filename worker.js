@@ -31,11 +31,11 @@ export default {
         return await handleAI(body, env);
       }
       if (path === '/ping') {
-        return respond({ ok: true, version: '4.4', storage: !!env.DATA_STORE });
+        return respond({ ok: true, version: '4.5', storage: !!env.DATA_STORE });
       }
       if (path === '/status') {
         return respond({
-          version: '4.4',
+          version: '4.5',
           keys: {
             cf_workers_ai: !!env.AI,
             groq:          !!env.GROQ_KEY,
@@ -209,7 +209,7 @@ async function webSearchSearxng(query, maxResults = 5) {
 // ── دارویاب: وقتی نتایج جستجو یه صفحه شرکت از darooyab.ir پیدا کردن،
 // به‌جای اکتفا به خلاصهٔ کوتاه جستجو، مستقیم خود صفحه رو می‌گیریم —
 // چون اونجا لیست کامل و واقعی محصولات شرکت با نام برند دقیق موجوده.
-function stripHtmlToText(html, maxLen = 4000) {
+function stripHtmlToText(html, maxLen = 9000) {
   let text = html
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
     .replace(/<style[\s\S]*?<\/style>/gi, ' ')
@@ -232,7 +232,7 @@ async function fetchDarooyabPageText(url) {
   }, 8000);
   if (!res.ok) throw new Error(`دارویاب → HTTP ${res.status}`);
   const html = await res.text();
-  return stripHtmlToText(html, 4000);
+  return stripHtmlToText(html, 9000);
 }
 
 // ── دیتابیس محلی دارویی (مرکز اطلاعات و مشاوره دارویی سریتا، GitHub Pages) ──
@@ -497,7 +497,7 @@ async function handleVision({ system, messages }, env) {
           'Authorization': `Bearer ${env.GITHUB_MODELS_KEY}`,
           'X-GitHub-Api-Version': '2022-11-28'
         },
-        body: JSON.stringify({ model: 'openai/gpt-4o', messages: visionMsgs, max_tokens: 3000 })
+        body: JSON.stringify({ model: 'openai/gpt-4o', messages: visionMsgs, max_tokens: 6000 })
       });
       const data = await safeJson(res);
       if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
@@ -517,7 +517,7 @@ async function handleVision({ system, messages }, env) {
           'x-api-key': env.CLAUDE_KEY,
           'anthropic-version': '2023-06-01'
         },
-        body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 3000, system, messages })
+        body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 6000, system, messages })
       });
       const data = await safeJson(res);
       if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
@@ -537,7 +537,7 @@ async function callCfAI(system, messages, AI) {
   const msgs = buildMessages(system, messages);
   const response = await AI.run('@cf/meta/llama-3.3-70b-instruct-fp8-fast', {
     messages: msgs,
-    max_tokens: 3000,
+    max_tokens: 6000,
   });
   const text = response?.response;
   if (!text) throw new Error('پاسخی از CF Workers AI نرسید');
@@ -554,7 +554,7 @@ async function callGroq(system, messages, key) {
     body: JSON.stringify({
       model: 'llama-3.3-70b-versatile',
       messages: buildMessages(system, messages),
-      max_tokens: 3000,
+      max_tokens: 6000,
       temperature: 0.8
     })
   });
@@ -578,7 +578,7 @@ async function callOpenRouter(system, messages, key) {
     body: JSON.stringify({
       model: 'openrouter/auto',
       messages: buildMessages(system, messages),
-      max_tokens: 3000,
+      max_tokens: 6000,
       temperature: 0.8
     })
   });
@@ -600,7 +600,7 @@ async function callDeepSeek(system, messages, key) {
     body: JSON.stringify({
       model: 'deepseek-chat',
       messages: buildMessages(system, messages),
-      max_tokens: 3000,
+      max_tokens: 6000,
       temperature: 0.8
     })
   });
@@ -624,7 +624,7 @@ async function callGitHubModels(system, messages, key) {
     body: JSON.stringify({
       model: 'openai/gpt-4o',
       messages: buildMessages(system, messages),
-      max_tokens: 3000,
+      max_tokens: 6000,
       temperature: 0.8
     })
   });
@@ -651,7 +651,7 @@ async function callClaude(system, messages, key) {
     },
     body: JSON.stringify({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 3000,
+      max_tokens: 6000,
       system,
       messages: normalized
     })
