@@ -1738,7 +1738,7 @@ function updateAiStatusBox() {
   }
 }
 
-async function gemini(sys, msg, history=[], imageParts=[], fallbackQuery=null) {
+async function gemini(sys, msg, history=[], imageParts=[], fallbackQuery=null, groundQuery=null) {
   // Bug fix: previously this hit a real network failure (DNS can't resolve the
   // placeholder domain), surfacing a confusing raw "Failed to fetch" in the toast.
   // Fail fast with a clear Persian message telling the rep exactly what's missing.
@@ -1755,10 +1755,15 @@ async function gemini(sys, msg, history=[], imageParts=[], fallbackQuery=null) {
   // Worker as a LAST RESORT, if Gemini, Groq, AND Claude all fail — it
   // queries a non-AI government drug database (openFDA) instead. See Worker
   // Tier 4. Safe to always pass when known; it's ignored unless needed.
+  //
+  // groundQuery (اختیاری): اگه داده بشه، Worker قبل از صدا زدن AI یه جستجوی
+  // وب واقعی (DuckDuckGo) انجام می‌ده و نتایج رو به system prompt اضافه می‌کنه
+  // — برای سوالاتی که نباید فقط از دانش training مدل جواب داده بشن
+  // (مثل لیست محصولات یه کمپانی ایرانی، یا رقبای واقعی یه دارو).
   const res = await fetch(PROXY, {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({system: sys, messages, fallbackQuery}),
+    body: JSON.stringify({system: sys, messages, fallbackQuery, groundQuery}),
   });
 
   const data = await res.json();
@@ -2497,6 +2502,7 @@ async function compareByAI() {
 
   try {
     const sys=`تو متخصص بازاریابی دارویی و مقایسه محصولات هستی. اطلاعات دقیق و عملی می‌دی.`;
+    const groundQuery = `${rival} ${prod.ingredient||''} ایران دارو مقایسه`;
     const res = await gemini(sys,
       `مقایسه جامع بین دو دارو:
 
@@ -2527,7 +2533,8 @@ async function compareByAI() {
 ⚠️ نقطه ضعف ما که باید آماده جوابش باشی:
 [صادقانه بنویس]
 
-فارسی، دقیق، قابل استفاده در ویزیت.`
+فارسی، دقیق، قابل استفاده در ویزیت.`,
+      [], [], null, groundQuery
     );
     showCmpResult(res);
   } catch(e) { toast('خطا: '+e.message,'err'); }
@@ -3598,7 +3605,8 @@ YEAR: [سال تأیید یا launch]
 - اگه کمپانی رو نمی‌شناسی بنویس UNKNOWN`;
 
   try {
-    const text = await gemini(sys, msg);
+    const groundQuery = `${company} داروسازی محصولات لیست ایران`;
+    const text = await gemini(sys, msg, [], [], null, groundQuery);
 
     if(text.includes('UNKNOWN')) {
       showCsState('initial');
