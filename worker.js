@@ -31,11 +31,11 @@ export default {
         return await handleAI(body, env);
       }
       if (path === '/ping') {
-        return respond({ ok: true, version: '4.3', storage: !!env.DATA_STORE });
+        return respond({ ok: true, version: '4.4', storage: !!env.DATA_STORE });
       }
       if (path === '/status') {
         return respond({
-          version: '4.3',
+          version: '4.4',
           keys: {
             cf_workers_ai: !!env.AI,
             groq:          !!env.GROQ_KEY,
@@ -235,33 +235,113 @@ async function fetchDarooyabPageText(url) {
   return stripHtmlToText(html, 4000);
 }
 
-// ترتیب اولویت: SearXNG (بدون کلید، چند instance) → Google CSE (اگه کلید تنظیم شده) → DuckDuckGo (آخرین راه)
+// ── دیتابیس محلی دارویی (مرکز اطلاعات و مشاوره دارویی سریتا، GitHub Pages) ──
+// شامل ~۳۰۰ دارو با نام، سیلاب (ژنریک انگلیسی)، گروه درمانی/فارماکولوژیک، نام تجاری، اشکال دارویی.
+// توی KV کش می‌شه (۲۴ ساعت) که هر بار از GitHub دانلود نشه.
+const CERITA_DRUG_JSON_URL = 'https://raw.githubusercontent.com/ceritamedicalconsult/ceritamedicalconsult.github.io/main/contents/data/drug.json';
+const CERITA_CACHE_KEY = 'cerita_drug_db_cache';
+const CERITA_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 ساعت
+
+async function getLocalDrugDB(env) {
+  if (env.DATA_STORE) {
+    try {
+      const cached = await env.DATA_STORE.get(CERITA_CACHE_KEY);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Date.now() - parsed.fetchedAt < CERITA_CACHE_TTL_MS) return parsed.data;
+      }
+    } catch (e) { /* کش خراب بود، دوباره fetch کن */ }
+  }
+
+  const res = await fetchWithTimeout(CERITA_DRUG_JSON_URL, {}, 8000);
+  if (!res.ok) throw new Error(`دیتابیس محلی دارویی → HTTP ${res.status}`);
+  const data = await res.json();
+
+  if (env.DATA_STORE) {
+    try {
+      await env.DATA_STORE.put(CERITA_CACHE_KEY, JSON.stringify({ data, fetchedAt: Date.now() }), { expirationTtl: 86400 * 7 });
+    } catch (e) { /* اگه ذخیره fail شد مهم نیست، همون data برگردونده می‌شه */ }
+  }
+  return data;
+}
+
+function normalizeFa(s) {
+  return (s || '').toString()
+    .replace(/[يى]/g, 'ی').replace(/ك/g, 'ک')
+    .replace(/[\u064B-\u065F\u0670]/g, '') // اعراب
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+async function searchLocalDrugDB(query, env, maxResults = 5) {
+  const db = await getLocalDrugDB(env);
+  const q = normalizeFa(query);
+  if (!q) return [];
+  const matches = db.filter(d => {
+    const name   = normalizeFa(d['نام دارو']);
+    const syl    = normalizeFa(d['سیلاب ']);
+    const brand  = normalizeFa(d['نام تجاری ']);
+    return (name && (name.includes(q) || q.includes(name))) ||
+           (syl  && (syl.includes(q)  || q.includes(syl)))  ||
+           (brand&& (brand.includes(q)|| q.includes(brand)));
+  }).slice(0, maxResults);
+
+  return matches.map(d => ({
+    title: `${(d['نام دارو']||'').trim()}${d['نام تجاری ']?.trim() ? ' (' + d['نام تجاری '].trim() + ')' : ''}`,
+    snippet: [
+      d['سیلاب ']?.trim()             ? `ژنریک: ${d['سیلاب '].trim()}` : '',
+      d['گروه درمانی ']?.trim()       ? `گروه درمانی: ${d['گروه درمانی '].trim()}` : '',
+      d['گروه فارماکولوژیک ']?.trim() ? `گروه فارماکولوژیک: ${d['گروه فارماکولوژیک '].trim()}` : '',
+      d['اشکال دارویی ']?.trim()      ? `اشکال دارویی: ${d['اشکال دارویی '].trim().replace(/\n/g, '، ')}` : '',
+    ].filter(Boolean).join(' | '),
+    url: 'cerita-local-db',
+  }));
+}
+
+// ترتیب اولویت: دیتابیس محلی (سریتا، سریع و قابل‌اتکا) + SearXNG → Google CSE → DuckDuckGo
 async function webSearch(query, env, maxResults = 5) {
-  let results, source;
+  let results = [];
+  let source = 'none';
+
+  // دیتابیس محلی دارویی (سریتا) — همیشه اول چک می‌شه، سریع و مستقل از وضعیت شبکه جستجوی وب
   try {
-    results = await webSearchSearxng(query, maxResults);
-    source = 'searxng';
+    const localMatches = await searchLocalDrugDB(query, env, 3);
+    if (localMatches.length) { results = [...localMatches]; source = 'cerita-local-db'; }
+  } catch (e) { /* دیتابیس محلی در دسترس نبود، مهم نیست */ }
+
+  // جستجوی وب — هر کدوم fail بشه می‌ره سراغ بعدی، بدون اینکه کل تابع رو بترکونه
+  let webResults = null, webSource = null;
+  try {
+    webResults = await webSearchSearxng(query, maxResults);
+    webSource = 'searxng';
   } catch (e) { /* fall through */ }
 
-  if (!results || !results.length) {
+  if (!webResults || !webResults.length) {
     try {
-      results = await webSearchGoogle(query, env, maxResults);
-      source = 'google';
+      webResults = await webSearchGoogle(query, env, maxResults);
+      webSource = 'google';
     } catch (e) { /* fall through */ }
   }
 
-  if (!results || !results.length) {
-    results = await webSearchDuckDuckGo(query, maxResults);
-    source = 'duckduckgo';
+  if (!webResults || !webResults.length) {
+    try {
+      webResults = await webSearchDuckDuckGo(query, maxResults);
+      webSource = 'duckduckgo';
+    } catch (e) { /* همه راه‌های جستجوی وب fail شدن — اگه دیتابیس محلی هم چیزی نداشت، results خالی می‌مونه */ }
   }
 
-  // اگه یکی از نتایج صفحه شرکت دارویاب بود، مستقیم خودش رو هم بگیر (داده کامل‌تر از خلاصه جستجو)
-  const darooyabHit = results.find(r => /darooyab\.ir\/Pharmaceuticalcompanies\//i.test(r.url || ''));
-  if (darooyabHit) {
-    try {
-      const pageText = await fetchDarooyabPageText(darooyabHit.url);
-      results = [{ title: darooyabHit.title + ' (لیست کامل محصولات از دارویاب)', snippet: pageText, url: darooyabHit.url }, ...results];
-    } catch (e) { /* اگه fetch مستقیم fail شد، با همون خلاصه جستجو ادامه بده */ }
+  if (webResults && webResults.length) {
+    // اگه یکی از نتایج صفحه شرکت دارویاب بود، مستقیم خودش رو هم بگیر (داده کامل‌تر از خلاصه جستجو)
+    const darooyabHit = webResults.find(r => /darooyab\.ir\/Pharmaceuticalcompanies\//i.test(r.url || ''));
+    if (darooyabHit) {
+      try {
+        const pageText = await fetchDarooyabPageText(darooyabHit.url);
+        webResults = [{ title: darooyabHit.title + ' (لیست کامل محصولات از دارویاب)', snippet: pageText, url: darooyabHit.url }, ...webResults];
+      } catch (e) { /* اگه fetch مستقیم fail شد، با همون خلاصه جستجو ادامه بده */ }
+    }
+    results = [...results, ...webResults];
+    source = source === 'cerita-local-db' ? `cerita-local-db+${webSource}` : webSource;
   }
 
   return { results, source };
