@@ -31,12 +31,13 @@ export default {
         return await handleAI(body, env);
       }
       if (path === '/ping') {
-        return respond({ ok: true, version: '3.7', storage: !!env.DATA_STORE });
+        return respond({ ok: true, version: '3.8', storage: !!env.DATA_STORE });
       }
       if (path === '/status') {
         return respond({
-          version: '3.7',
+          version: '3.8',
           keys: {
+            cf_workers_ai: !!env.AI,
             groq:          !!env.GROQ_KEY,
             openrouter:    !!env.OPENROUTER_KEY,
             deepseek:      !!env.DEEPSEEK_KEY,
@@ -125,7 +126,17 @@ async function handleData(request, url, env) {
 async function handleAI({ system, messages, fallbackQuery }, env) {
   const errors = [];
 
-  // 1. Groq Llama
+  // 1. Cloudflare Workers AI (داخلی، بدون کلید خارجی)
+  if (env.AI) {
+    try {
+      const text = await callCfAI(system, messages, env.AI);
+      return respond({ text, source: 'cf-workers-ai' });
+    } catch (e) {
+      errors.push(`CF Workers AI: ${e.message}`);
+    }
+  } else { errors.push('CF Workers AI: binding تنظیم نشده'); }
+
+  // 2. Groq Llama
   if (env.GROQ_KEY) {
     try {
       const text = await callGroq(system, messages, env.GROQ_KEY);
@@ -135,7 +146,7 @@ async function handleAI({ system, messages, fallbackQuery }, env) {
     }
   } else { errors.push('Groq: کلید تنظیم نشده'); }
 
-  // 2. OpenRouter (35+ free models)
+  // 3. OpenRouter (35+ free models)
   if (env.OPENROUTER_KEY) {
     try {
       const text = await callOpenRouter(system, messages, env.OPENROUTER_KEY);
@@ -145,7 +156,7 @@ async function handleAI({ system, messages, fallbackQuery }, env) {
     }
   } else { errors.push('OpenRouter: کلید تنظیم نشده'); }
 
-  // 3. DeepSeek
+  // 4. DeepSeek
   if (env.DEEPSEEK_KEY) {
     try {
       const text = await callDeepSeek(system, messages, env.DEEPSEEK_KEY);
@@ -155,7 +166,7 @@ async function handleAI({ system, messages, fallbackQuery }, env) {
     }
   } else { errors.push('DeepSeek: کلید تنظیم نشده'); }
 
-  // 4. GitHub Models GPT-4o
+  // 5. GitHub Models GPT-4o
   if (env.GITHUB_MODELS_KEY) {
     try {
       const text = await callGitHubModels(system, messages, env.GITHUB_MODELS_KEY);
@@ -165,7 +176,7 @@ async function handleAI({ system, messages, fallbackQuery }, env) {
     }
   } else { errors.push('GitHub Models: کلید تنظیم نشده'); }
 
-  // 5. Claude Haiku
+  // 6. Claude Haiku
   if (env.CLAUDE_KEY) {
     try {
       const text = await callClaude(system, messages, env.CLAUDE_KEY);
@@ -191,6 +202,17 @@ async function handleAI({ system, messages, fallbackQuery }, env) {
 // ═══════════════════════════════════════════════════
 //  AI PROVIDERS
 // ═══════════════════════════════════════════════════
+async function callCfAI(system, messages, AI) {
+  const msgs = buildMessages(system, messages);
+  const response = await AI.run('@cf/meta/llama-3.3-70b-instruct-fp8-fast', {
+    messages: msgs,
+    max_tokens: 3000,
+  });
+  const text = response?.response;
+  if (!text) throw new Error('پاسخی از CF Workers AI نرسید');
+  return text;
+}
+
 async function callGroq(system, messages, key) {
   const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
