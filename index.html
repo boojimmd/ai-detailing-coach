@@ -2965,7 +2965,7 @@ async function generateClinicalData(i, btn) {
 
   try {
     const { sys, msg } = buildClinicalDataPrompt(prod.brand, prod.ingredient, prod.indication, specLabel(prod.specialty));
-    const raw = await gemini(sys, msg);
+    const raw = await gemini(sys, msg, [], [], null, `${prod.ingredient} clinical trial results study NEJM Lancet`);
     const parsed = safeParseJsonFromAi(raw);
     if (!parsed) throw new Error('پاسخ AI به فرمت JSON معتبر نبود — دوباره امتحان کن');
     prod.clinicalData = parsed;
