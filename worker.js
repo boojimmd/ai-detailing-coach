@@ -31,11 +31,11 @@ export default {
         return await handleAI(body, env);
       }
       if (path === '/ping') {
-        return respond({ ok: true, version: '4.1', storage: !!env.DATA_STORE });
+        return respond({ ok: true, version: '4.2', storage: !!env.DATA_STORE });
       }
       if (path === '/status') {
         return respond({
-          version: '4.1',
+          version: '4.2',
           keys: {
             cf_workers_ai: !!env.AI,
             groq:          !!env.GROQ_KEY,
@@ -160,11 +160,58 @@ async function webSearchDuckDuckGo(query, maxResults = 5) {
   return results;
 }
 
+// ── SearXNG (متاسرچ متن‌باز، instance های عمومی، بدون کلید) ──
+// چند instance رو امتحان می‌کنه چون هر کدوم ممکنه پایین باشه یا JSON رو غیرفعال کرده باشه.
+const SEARXNG_INSTANCES = [
+  'https://searx.be',
+  'https://search.bus-hit.me',
+  'https://searx.tiekoetter.com',
+  'https://priv.au',
+];
+
+async function fetchWithTimeout(url, opts = {}, ms = 6000) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { ...opts, signal: ctrl.signal });
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+async function webSearchSearxng(query, maxResults = 5) {
+  let lastErr = null;
+  for (const base of SEARXNG_INSTANCES) {
+    try {
+      const url = `${base}/search?q=${encodeURIComponent(query)}&format=json`;
+      const res = await fetchWithTimeout(url, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AIDetailingCoach/1.0)' },
+      }, 6000);
+      if (!res.ok) { lastErr = new Error(`${base} → HTTP ${res.status}`); continue; }
+      const data = await res.json();
+      const items = (data.results || []).slice(0, maxResults);
+      if (items.length) {
+        return items.map(it => ({ title: it.title || '', snippet: it.content || '' }));
+      }
+      lastErr = new Error(`${base} → نتیجه‌ای نداشت`);
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error('هیچ instance سرچ‌انگ‌ای جواب نداد');
+}
+
+// ترتیب اولویت: SearXNG (بدون کلید، چند instance) → Google CSE (اگه کلید تنظیم شده) → DuckDuckGo (آخرین راه)
 async function webSearch(query, env, maxResults = 5) {
+  try {
+    const results = await webSearchSearxng(query, maxResults);
+    if (results.length) return { results, source: 'searxng' };
+  } catch (e) { /* fall through */ }
+
   try {
     const results = await webSearchGoogle(query, env, maxResults);
     if (results.length) return { results, source: 'google' };
-  } catch (e) { /* fall through to DuckDuckGo */ }
+  } catch (e) { /* fall through */ }
 
   const results = await webSearchDuckDuckGo(query, maxResults);
   return { results, source: 'duckduckgo' };
