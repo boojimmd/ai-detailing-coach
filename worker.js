@@ -31,11 +31,11 @@ export default {
         return await handleAI(body, env);
       }
       if (path === '/ping') {
-        return respond({ ok: true, version: '4.5', storage: !!env.DATA_STORE });
+        return respond({ ok: true, version: '4.6', storage: !!env.DATA_STORE });
       }
       if (path === '/status') {
         return respond({
-          version: '4.5',
+          version: '4.6',
           keys: {
             cf_workers_ai: !!env.AI,
             groq:          !!env.GROQ_KEY,
@@ -364,11 +364,18 @@ async function handleAI({ system, messages, fallbackQuery, groundQuery }, env) {
 
   // اگه groundQuery داده شده، اول جستجوی وب رو انجام بده و به system prompt اضافه کن
   // (non-fatal — اگه جستجو fail بشه، با همون system prompt قبلی ادامه می‌ده)
+  // groundingSource/groundingCount به همه respond() ها اضافه می‌شه تا فرانت‌اند
+  // بفهمه گراندینگ واقعاً اتفاق افتاده یا نه و از کجا.
+  let groundingSource = null;
+  let groundingCount  = 0;
   if (groundQuery) {
     try {
       const { results, source } = await webSearch(groundQuery, env);
+      groundingSource = source;
+      groundingCount  = results.length;
       system = system + buildGroundingContext(results, groundQuery, source);
     } catch (e) {
+      groundingSource = 'failed';
       // جستجو fail شد — بدون grounding ادامه بده، کرش نکن
       system = system + `\n\n[توجه: جستجوی وب برای «${groundQuery}» ناموفق بود — بر اساس دانش داخلی جواب بده و صراحتاً بگو ممکنه به‌روز نباشه.]\n`;
     }
@@ -380,7 +387,7 @@ async function handleAI({ system, messages, fallbackQuery, groundQuery }, env) {
   if (env.AI) {
     try {
       const text = await callCfAI(system, messages, env.AI);
-      return respond({ text, source: 'cf-workers-ai' });
+      return respond({ text, source: 'cf-workers-ai', groundingSource, groundingCount });
     } catch (e) {
       errors.push(`CF Workers AI: ${e.message}`);
     }
@@ -390,7 +397,7 @@ async function handleAI({ system, messages, fallbackQuery, groundQuery }, env) {
   if (env.GROQ_KEY) {
     try {
       const text = await callGroq(system, messages, env.GROQ_KEY);
-      return respond({ text, source: 'groq' });
+      return respond({ text, source: 'groq', groundingSource, groundingCount });
     } catch (e) {
       errors.push(`Groq: ${e.message}`);
     }
@@ -400,7 +407,7 @@ async function handleAI({ system, messages, fallbackQuery, groundQuery }, env) {
   if (env.OPENROUTER_KEY) {
     try {
       const text = await callOpenRouter(system, messages, env.OPENROUTER_KEY);
-      return respond({ text, source: 'openrouter' });
+      return respond({ text, source: 'openrouter', groundingSource, groundingCount });
     } catch (e) {
       errors.push(`OpenRouter: ${e.message}`);
     }
@@ -410,7 +417,7 @@ async function handleAI({ system, messages, fallbackQuery, groundQuery }, env) {
   if (env.DEEPSEEK_KEY) {
     try {
       const text = await callDeepSeek(system, messages, env.DEEPSEEK_KEY);
-      return respond({ text, source: 'deepseek' });
+      return respond({ text, source: 'deepseek', groundingSource, groundingCount });
     } catch (e) {
       errors.push(`DeepSeek: ${e.message}`);
     }
@@ -420,7 +427,7 @@ async function handleAI({ system, messages, fallbackQuery, groundQuery }, env) {
   if (env.GITHUB_MODELS_KEY) {
     try {
       const text = await callGitHubModels(system, messages, env.GITHUB_MODELS_KEY);
-      return respond({ text, source: 'github-models' });
+      return respond({ text, source: 'github-models', groundingSource, groundingCount });
     } catch (e) {
       errors.push(`GitHub Models: ${e.message}`);
     }
@@ -430,7 +437,7 @@ async function handleAI({ system, messages, fallbackQuery, groundQuery }, env) {
   if (env.CLAUDE_KEY) {
     try {
       const text = await callClaude(system, messages, env.CLAUDE_KEY);
-      return respond({ text, source: 'claude' });
+      return respond({ text, source: 'claude', groundingSource, groundingCount });
     } catch (e) {
       errors.push(`Claude: ${e.message}`);
     }
@@ -440,7 +447,7 @@ async function handleAI({ system, messages, fallbackQuery, groundQuery }, env) {
   if (fallbackQuery) {
     try {
       const text = await callNonAiFallback(fallbackQuery, env);
-      return respond({ text, source: 'fallback-db' });
+      return respond({ text, source: 'fallback-db', groundingSource, groundingCount });
     } catch (e) {
       errors.push(`Fallback DB: ${e.message}`);
     }
