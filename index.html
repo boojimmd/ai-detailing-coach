@@ -1224,6 +1224,18 @@ input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-ca
       <label class="fl">یادداشت (اختیاری)</label>
       <textarea class="fi" id="avNote" rows="2" placeholder="مثال: از قیمت سوال کرد، بریف بعدی روی CV safety باشه..."></textarea>
     </div>
+    <div class="fgroup">
+      <label class="fl">اعتراض مطرح‌شده (اختیاری)</label>
+      <input class="fi" id="avObjection" placeholder="مثال: قیمت بالاست نسبت به رقیب">
+    </div>
+    <div class="fgroup">
+      <label class="fl">قولی که دادی (اختیاری)</label>
+      <input class="fi" id="avCommitment" placeholder="مثال: مقاله SURMOUNT رو میارم">
+    </div>
+    <div class="fgroup">
+      <label class="fl">گام بعدی (اختیاری)</label>
+      <input class="fi" id="avNextStep" placeholder="مثال: پیگیری تا ۲ هفته دیگه">
+    </div>
     <button class="btn" id="btnSaveVisit"><svg><use href="#ic-check"/></svg>ذخیره</button>
     <button class="btn sec mt8" onclick="closeSheet('addVisitOv')">انصراف</button>
   </div>
@@ -2411,7 +2423,7 @@ async function generateBriefing() {
     const lv = sameProduct || sorted[0];
     if (lv) {
       const outcomeLabel = { positive: 'مثبت', neutral: 'خنثی', negative: 'منفی' }[lv.outcome] || lv.outcome;
-      lastVisitSummary = `تاریخ: ${lv.date} | محصول: ${lv.prodName||'—'} | نتیجه: ${outcomeLabel}${lv.score!=null?' | امتیاز: '+lv.score:''}${lv.note?' | یادداشت: '+lv.note:''}`;
+      lastVisitSummary = `تاریخ: ${lv.date} | محصول: ${lv.prodName||'—'} | نتیجه: ${outcomeLabel}${lv.score!=null?' | امتیاز: '+lv.score:''}${lv.note?' | یادداشت: '+lv.note:''}${lv.objection?' | اعتراض مطرح‌شده: '+lv.objection:''}${lv.commitment?' | قولی که دادی: '+lv.commitment:''}${lv.nextStep?' | گام بعدی برنامه‌ریزی‌شده: '+lv.nextStep:''}`;
     }
   }
 
@@ -2436,7 +2448,7 @@ ${lastVisitSummary ? 'داده آخرین ویزیت ثبت‌شده: '+lastVisi
 
 بریفینگ باید شامل:
 
-🎯 هدف این ویزیت (یه جمله):
+${lastVisitSummary && lastVisitSummary.includes('قولی که دادی') ? '🔁 پیگیری قول قبلی (اول از همه این رو مطرح کن):\n\n' : ''}🎯 هدف این ویزیت (یه جمله):
 
 🧠 یه Insight جدید برای امروز:
 
@@ -2764,6 +2776,9 @@ function openVisitList(docIdx) {
         </div>
         <div style="font-size:.7rem;color:var(--txt3);margin-top:4px">${v.date}${v.score?' · امتیاز: '+v.score+'/100':''}</div>
         ${v.note?`<div style="font-size:.76rem;color:var(--txt2);margin-top:6px;line-height:1.5">${v.note}</div>`:''}
+        ${v.objection?`<div style="font-size:.72rem;color:var(--ora);margin-top:6px">⚠️ اعتراض: ${v.objection}</div>`:''}
+        ${v.commitment?`<div style="font-size:.72rem;color:var(--sky);margin-top:4px">🤝 قول دادی: ${v.commitment}</div>`:''}
+        ${v.nextStep?`<div style="font-size:.72rem;color:var(--pur1);margin-top:4px">➡️ گام بعدی: ${v.nextStep}</div>`:''}
       </div>
     `).join('');
   }
@@ -2778,7 +2793,7 @@ function openAddVisit(docIdx) {
   const sel = document.getElementById('avProd');
   sel.innerHTML = S.products.map((p,i) => `<option value="${i}">${p.brand||p.ingredient}</option>`).join('');
   document.getElementById('avDate').value = new Date().toISOString().split('T')[0];
-  document.getElementById('avNote').value = '';
+  ['avNote','avObjection','avCommitment','avNextStep'].forEach(id => document.getElementById(id).value = '');
   ['avPos','avNeu','avNeg'].forEach(id => {
     document.getElementById(id).classList.remove('sel','easy','med','hard');
   });
@@ -2806,12 +2821,16 @@ function saveVisit() {
     date: document.getElementById('avDate').value,
     outcome: visitOutcome,
     note: document.getElementById('avNote').value.trim(),
+    objection: document.getElementById('avObjection').value.trim(),
+    commitment: document.getElementById('avCommitment').value.trim(),
+    nextStep: document.getElementById('avNextStep').value.trim(),
     score: null,
   };
   if(!doc.visits) doc.visits = [];
   doc.visits.push(visit);
   saveData(); renderDoctors();
   closeSheet('addVisitOv');
+  ['avObjection','avCommitment','avNextStep','avNote'].forEach(id => document.getElementById(id).value='');
   openVisitList(currentDocIdx);
   toast('ویزیت ثبت شد','ok');
 }
