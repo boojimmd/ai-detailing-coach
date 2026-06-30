@@ -540,7 +540,7 @@ input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-ca
 .cf-persona-note strong{color:var(--pur1);font-weight:800;}
 
 </style>
-<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<script src="./lib/tesseract.min.js"></script>
 </head>
 <body>
 
@@ -6779,24 +6779,57 @@ function selAddProdTab(idx, btn) {
 }
 
 // ── OCR a single canvas with Tesseract ───────────────────────────
+
+// ── بارگذاری اسکریپت با timeout (جلوگیری از گیر کردن روی شبکه کند/فیلتر) ──
+function loadScriptWithTimeout(src, timeoutMs = 10000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error('بارگذاری کتابخانه بیش از حد طول کشید (timeout) — اینترنت رو چک کن'));
+    }, timeoutMs);
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = () => { clearTimeout(timer); resolve(); };
+    s.onerror = () => { clearTimeout(timer); reject(new Error('بارگذاری کتابخانه از CDN ناموفق بود')); };
+    document.head.appendChild(s);
+  });
+}
+
+// منتظر می‌مونه تا Tesseract (که در <head> لود شده) آماده بشه، حداکثر تا timeoutMs
+function waitForTesseract(timeoutMs = 8000) {
+  return new Promise((resolve, reject) => {
+    if (typeof Tesseract !== 'undefined') return resolve();
+    const start = Date.now();
+    const iv = setInterval(() => {
+      if (typeof Tesseract !== 'undefined') { clearInterval(iv); resolve(); }
+      else if (Date.now() - start > timeoutMs) { clearInterval(iv); reject(new Error('Tesseract.js بارگذاری نشد — اینترنت رو چک کن')); }
+    }, 200);
+  });
+}
+
+// گزینه‌های Tesseract — همه از روی همین دامنه (GitHub Pages) لود می‌شن، نه CDN خارجی.
+// langPath فقط فایل‌های زبان (fas/eng) رو از raw.githubusercontent.com می‌گیره.
+const TESS_OPTS = {
+  workerPath: './lib/tesseract-worker.min.js',
+  corePath:   './lib/',
+  langPath:   'https://raw.githubusercontent.com/naptha/tessdata/gh-pages/4.0.0_fast',
+};
+
 async function ocrCanvas(canvas) {
-  if (typeof Tesseract === 'undefined') throw new Error('Tesseract.js بارگذاری نشده');
-  const result = await Tesseract.recognize(canvas, 'fas+eng', { logger: () => {} });
+  await waitForTesseract();
+  const result = await Tesseract.recognize(canvas, 'fas+eng', { logger: () => {}, ...TESS_OPTS });
   return result.data.text || '';
 }
 
 // ── Render PDF pages → OCR text ──────────────────────────────────
 async function ocrPdf(arrayBuffer) {
-  // Load PDF.js dynamically if not yet loaded
+  // PDF.js به‌صورت ماژول و از همین repo لود می‌شه (بدون وابستگی به CDN خارجی)
   if (!window.pdfjsLib) {
-    await new Promise((res, rej) => {
-      const s = document.createElement('script');
-      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.js';
-      s.onload = res; s.onerror = rej;
-      document.head.appendChild(s);
-    });
-    window.pdfjsLib.GlobalWorkerOptions.workerSrc =
-      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.js';
+    try {
+      window.pdfjsLib = await import('./lib/pdf.min.js');
+    } catch (e) {
+      throw new Error('کتابخانه PDF.js بارگذاری نشد: ' + e.message);
+    }
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc = './lib/pdf.worker.min.js';
   }
   const pdf   = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
   const pages = Math.min(pdf.numPages, 4); // max 4 pages for speed
@@ -6836,7 +6869,7 @@ async function handleApFile(e) {
   };
 
   try {
-    const isPdf = file.type === 'application/pdf';
+    const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
     setStatus('در حال خواندن فایل...');
 
     if (isPdf) {
@@ -6848,13 +6881,13 @@ async function handleApFile(e) {
       apFileData = await readFileAsBase64(file);
     } else {
       // Image → Tesseract directly
+      setStatus('در حال آماده‌سازی OCR...');
+      await waitForTesseract();
       setStatus('در حال خواندن متن از عکس...');
       const imgUrl = URL.createObjectURL(file);
-      if (typeof Tesseract !== 'undefined') {
-        const result = await Tesseract.recognize(imgUrl, 'fas+eng', { logger: () => {} });
-        apOcrText = result.data.text || '';
-        URL.revokeObjectURL(imgUrl);
-      }
+      const result = await Tesseract.recognize(imgUrl, 'fas+eng', { logger: () => {}, ...TESS_OPTS });
+      apOcrText = result.data.text || '';
+      URL.revokeObjectURL(imgUrl);
       apFileData = await readFileAsBase64(file);
     }
 
