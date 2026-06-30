@@ -31,11 +31,11 @@ export default {
         return await handleAI(body, env);
       }
       if (path === '/ping') {
-        return respond({ ok: true, version: '4.2', storage: !!env.DATA_STORE });
+        return respond({ ok: true, version: '4.3', storage: !!env.DATA_STORE });
       }
       if (path === '/status') {
         return respond({
-          version: '4.2',
+          version: '4.3',
           keys: {
             cf_workers_ai: !!env.AI,
             groq:          !!env.GROQ_KEY,
@@ -134,7 +134,7 @@ async function webSearchGoogle(query, env, maxResults = 5) {
   const data = await safeJson(res);
   if (data.error) throw new Error(data.error.message || 'خطای Google CSE');
   const items = data.items || [];
-  return items.map(it => ({ title: it.title || '', snippet: it.snippet || '' })).filter(r => r.title);
+  return items.map(it => ({ title: it.title || '', snippet: it.snippet || '', url: it.link || '' })).filter(r => r.title);
 }
 
 async function webSearchDuckDuckGo(query, maxResults = 5) {
@@ -147,15 +147,20 @@ async function webSearchDuckDuckGo(query, maxResults = 5) {
   if (!res.ok) throw new Error(`جستجوی وب ناموفق (HTTP ${res.status})`);
   const html = await res.text();
 
-  // استخراج عنوان + خلاصه هر نتیجه با regex (Workers به DOMParser دسترسی نداره)
+  // استخراج عنوان + لینک + خلاصه هر نتیجه با regex (Workers به DOMParser دسترسی نداره)
   const results = [];
-  const blockRe = /<a[^>]*class="result__a"[^>]*>(.*?)<\/a>[\s\S]*?<a[^>]*class="result__snippet"[^>]*>(.*?)<\/a>/g;
+  const blockRe = /<a[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>[\s\S]*?<a[^>]*class="result__snippet"[^>]*>(.*?)<\/a>/g;
   let m;
   const strip = (s) => s.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&#x27;/g, "'").replace(/&quot;/g, '"').trim();
   while ((m = blockRe.exec(html)) && results.length < maxResults) {
-    const title = strip(m[1]);
-    const snippet = strip(m[2]);
-    if (title) results.push({ title, snippet });
+    const rawUrl = m[1];
+    const title = strip(m[2]);
+    const snippet = strip(m[3]);
+    // DDG لینک‌ها رو از طریق ریدایرکت /l/?uddg= می‌فرسته — استخراج لینک واقعی
+    let realUrl = rawUrl;
+    const uddgMatch = rawUrl.match(/uddg=([^&]+)/);
+    if (uddgMatch) { try { realUrl = decodeURIComponent(uddgMatch[1]); } catch (e) {} }
+    if (title) results.push({ title, snippet, url: realUrl });
   }
   return results;
 }
@@ -191,7 +196,7 @@ async function webSearchSearxng(query, maxResults = 5) {
       const data = await res.json();
       const items = (data.results || []).slice(0, maxResults);
       if (items.length) {
-        return items.map(it => ({ title: it.title || '', snippet: it.content || '' }));
+        return items.map(it => ({ title: it.title || '', snippet: it.content || '', url: it.url || '' }));
       }
       lastErr = new Error(`${base} → نتیجه‌ای نداشت`);
     } catch (e) {
@@ -201,20 +206,65 @@ async function webSearchSearxng(query, maxResults = 5) {
   throw lastErr || new Error('هیچ instance سرچ‌انگ‌ای جواب نداد');
 }
 
+// ── دارویاب: وقتی نتایج جستجو یه صفحه شرکت از darooyab.ir پیدا کردن،
+// به‌جای اکتفا به خلاصهٔ کوتاه جستجو، مستقیم خود صفحه رو می‌گیریم —
+// چون اونجا لیست کامل و واقعی محصولات شرکت با نام برند دقیق موجوده.
+function stripHtmlToText(html, maxLen = 4000) {
+  let text = html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<\/(tr|p|div|li|h[1-6])>/gi, '\n')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&#x27;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n[ \t]*\n+/g, '\n')
+    .trim();
+  return text.slice(0, maxLen);
+}
+
+async function fetchDarooyabPageText(url) {
+  const res = await fetchWithTimeout(url, {
+    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36' },
+  }, 8000);
+  if (!res.ok) throw new Error(`دارویاب → HTTP ${res.status}`);
+  const html = await res.text();
+  return stripHtmlToText(html, 4000);
+}
+
 // ترتیب اولویت: SearXNG (بدون کلید، چند instance) → Google CSE (اگه کلید تنظیم شده) → DuckDuckGo (آخرین راه)
 async function webSearch(query, env, maxResults = 5) {
+  let results, source;
   try {
-    const results = await webSearchSearxng(query, maxResults);
-    if (results.length) return { results, source: 'searxng' };
+    results = await webSearchSearxng(query, maxResults);
+    source = 'searxng';
   } catch (e) { /* fall through */ }
 
-  try {
-    const results = await webSearchGoogle(query, env, maxResults);
-    if (results.length) return { results, source: 'google' };
-  } catch (e) { /* fall through */ }
+  if (!results || !results.length) {
+    try {
+      results = await webSearchGoogle(query, env, maxResults);
+      source = 'google';
+    } catch (e) { /* fall through */ }
+  }
 
-  const results = await webSearchDuckDuckGo(query, maxResults);
-  return { results, source: 'duckduckgo' };
+  if (!results || !results.length) {
+    results = await webSearchDuckDuckGo(query, maxResults);
+    source = 'duckduckgo';
+  }
+
+  // اگه یکی از نتایج صفحه شرکت دارویاب بود، مستقیم خودش رو هم بگیر (داده کامل‌تر از خلاصه جستجو)
+  const darooyabHit = results.find(r => /darooyab\.ir\/Pharmaceuticalcompanies\//i.test(r.url || ''));
+  if (darooyabHit) {
+    try {
+      const pageText = await fetchDarooyabPageText(darooyabHit.url);
+      results = [{ title: darooyabHit.title + ' (لیست کامل محصولات از دارویاب)', snippet: pageText, url: darooyabHit.url }, ...results];
+    } catch (e) { /* اگه fetch مستقیم fail شد، با همون خلاصه جستجو ادامه بده */ }
+  }
+
+  return { results, source };
 }
 
 function buildGroundingContext(results, query, source) {
