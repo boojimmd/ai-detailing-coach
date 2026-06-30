@@ -2295,6 +2295,7 @@ async function startRoleplay() {
   document.getElementById('chatBody').innerHTML    = '';
   document.getElementById('btnScorecard').classList.add('hidden');
   document.getElementById('chatInput').value       = '';
+  S.isEvidenceDrill = false; // مطمئن شو حالت drill قبلی نشت نکرده به یه روپلی معمولی
 
   const diffMap = {
     easy: 'ملایم. اگه جواب معقول بده، راحت قانع می‌شی.',
@@ -2320,6 +2321,73 @@ async function startRoleplay() {
 
   try {
     const first = await gemini(S.chatSys, 'ویزیت الان شروع شد. یه واکنش اولیه واقع‌بینانه داشته باش (۱-۲ جمله).');
+    removeTyping();
+    addBubble('ai', first);
+    S.chatHistory.push({role:'model', parts:[{text:first}]});
+    S.chatMessages.push({role:'ai', text:first});
+  } catch(e) { removeTyping(); toast('خطا: '+e.message,'err'); }
+}
+
+// ═══════════════════════════════════════════════════
+//  EVIDENCE DRILL — تمرین دفاع عمیق از یه مطالعه خاص
+//  پزشک شبیه‌سازی‌شده فقط روی متدولوژی همون یه trial متمرکزه:
+//  randomization/blinding، ITT vs per-protocol، دراپ‌اوت،
+//  generalizability جمعیت، comparator، endpoint surrogate/hard،
+//  تأمین مالی/COI، معناداری آماری vs بالینی، CI، طول پیگیری.
+//  گراندینگ زنده می‌گیره تا روی نقدهای واقعی همون trial متمرکز بشه،
+//  نه نقد ژنریک از حافظه AI.
+// ═══════════════════════════════════════════════════
+async function startEvidenceDrill(prodIdx, studyIdx) {
+  const prod  = S.products[prodIdx];
+  const study = prod?.clinicalData?.studies?.[studyIdx];
+  if (!prod || !study) { toast('مطالعه پیدا نشد', 'err'); return; }
+
+  S.currentProd = prod;
+  S.isEvidenceDrill = true;
+  S.evidenceDrillStudy = study;
+  S.chatHistory = []; S.chatMessages = [];
+  document.getElementById('chatTitle').textContent = `Evidence Drill — ${study.name||'مطالعه'}`;
+  document.getElementById('chatSub').textContent   = `${prod.brand||prod.ingredient} · بررسی متدولوژیک`;
+  document.getElementById('chatBody').innerHTML    = '';
+  document.getElementById('btnScorecard').classList.add('hidden');
+  document.getElementById('chatInput').value       = '';
+
+  S.chatSys = `تو یه پزشک بسیار دقیق و روش‌شناس هستی که تخصص ویژه‌ای در نقد متدولوژیک کارآزمایی‌های بالینی داری (شبیه یه epidemiologist/biostatistician که پزشکی هم می‌کنه).
+مدرپ داره سعی می‌کنه با استناد به مطالعه «${study.name}» دارو رو معرفی کنه. وظیفه تو اینه که فقط و فقط روی **متدولوژی همین یک مطالعه** عمیق سوال بپرسی — نه چیز دیگه‌ای.
+
+اطلاعاتی که از این مطالعه داری:
+نام: ${study.name || 'نامشخص'}
+نوع: ${study.type || 'نامشخص'}
+جمعیت: ${study.population || 'نامشخص'} (n=${study.n || 'نامشخص'})
+پیامد اولیه: ${study.primaryEndpoint || 'نامشخص'}
+نتیجه: ${study.result || 'نامشخص'}
+
+محورهایی که باید ازشون سوال بپرسی (هر بار فقط ۱ یا ۲ تا، نه همه باهم):
+- Randomization/Blinding: آیا واقعاً double-blind بود؟ چطور تضمین شده؟
+- ITT vs per-protocol: نتیجه با کدوم روش گزارش شده؟ نرخ dropout چقدر بود و چه اثری روی نتیجه داشت؟
+- Generalizability جمعیت: criteria ورود/خروج چقدر محدودکننده بودن؟ این جمعیت چقدر به بیمارای واقعی این پزشک شبیهه؟
+- Comparator: مقایسه با placebo بود یا یه داروی فعال؟ آیا comparator منصفانه انتخاب شده (دوز مناسب رقیب)؟
+- Surrogate vs Hard Endpoint: آیا پیامد اولیه یه outcome بالینی واقعی بود (مرگ‌ومیر، حمله قلبی) یا یه surrogate marker (مثل کاهش وزن، HbA1c)؟
+- تأمین مالی / Conflict of Interest: مطالعه توسط خود شرکت سازنده تأمین مالی شده؟ این چه تأثیری روی اعتبار نتیجه داره؟
+- معناداری آماری vs بالینی: آیا p-value معنادار، عملاً یعنی تفاوت قابل‌توجه بالینی هم هست؟ Confidence Interval چقدر وسیعه؟
+- طول پیگیری: آیا مدت مطالعه برای نتیجه‌گیری در مورد safety/efficacy بلندمدت کافیه؟
+
+قوانین رفتاری:
+- اگه مدرپ جواب درست و دقیق بده، با احترام قبول کن و سوال بعدی (محور دیگه) رو بپرس.
+- اگه مدرپ جواب مبهم، نادرست، یا overstate کنه (ادعای بیشتر از چیزی که داده نشون می‌ده)، صریح و مودبانه به چالش بکش — نگو "باشه قبول دارم"، واقعاً push back کن.
+- فارسی، کوتاه (۱-۳ جمله)، دقیق و علمی — نه پرخاشگر، ولی جدی و سخت‌گیر.
+- در پایان هر پیام، یه سوال محورمحور مشخص بپرس تا مکالمه پیش بره.`;
+
+  openFs('chatOv');
+  addTyping();
+
+  try {
+    const first = await gemini(
+      S.chatSys,
+      'ویزیت الان شروع شد و مدرپ می‌خواد دارو رو معرفی کنه. یه واکنش اولیه کوتاه بده و اولین سوال متدولوژیک رو از یکی از محورهای بالا بپرس.',
+      [], [], null,
+      `${study.name} clinical trial limitations criticism methodology design`
+    );
     removeTyping();
     addBubble('ai', first);
     S.chatHistory.push({role:'model', parts:[{text:first}]});
@@ -2383,6 +2451,7 @@ function confirmEndChat() {
 
 // ═══════════════ SCORECARD ═══════════════
 async function generateScorecard() {
+  if (S.isEvidenceDrill) return generateEvidenceScorecard();
   const prod = S.currentProd;
   const doc  = S.currentDoc || S.selectedArch;
   const docName = doc?.name || doc?.label || 'پزشک';
@@ -2487,6 +2556,117 @@ Close: [۱-۱۰]
       </button>
       <button class="btn mt8" onclick="closeFs('scorecardOv');startRoleplay()" style="background:var(--pur-bg);color:var(--pur);box-shadow:none;border:1px solid rgba(109,40,217,.2)">
         <svg><use href="#ic-repeat"/></svg>دوباره تمرین
+      </button>
+    `;
+  } catch(e) {
+    document.getElementById('scorecardBody').innerHTML = `<div class="warn-box"><svg><use href="#ic-warn"/></svg>${e.message}</div>`;
+  }
+}
+
+// ═══ EVIDENCE DRILL SCORECARD — رتبه‌بندی دقیق و سخت‌گیرانه ═══
+async function generateEvidenceScorecard() {
+  const prod  = S.currentProd;
+  const study = S.evidenceDrillStudy || {};
+
+  document.getElementById('scorecardSub').textContent = `${study.name||'مطالعه'} · Evidence Drill`;
+  document.getElementById('scorecardBody').innerHTML = `<div class="empty"><div class="empty-ic"><div class="spin dark" style="width:32px;height:32px;border-width:3px"></div></div><div class="empty-txt" style="margin-top:12px">در حال تحلیل دقت متدولوژیک...</div></div>`;
+  openFs('scorecardOv');
+
+  S.sessions++;
+  saveData(); updateStats();
+
+  const conv = S.chatMessages.map(m=>`${m.role==='user'?'مدرپ':'پزشک'}: ${m.text}`).join('\n');
+
+  try {
+    const sys = `تو یه biostatistician/epidemiologist سخت‌گیر هستی که مکالمات مدرپ‌ها درباره متدولوژی کارآزمایی‌های بالینی رو دقیق و بی‌رحمانه ارزیابی می‌کنی. هیچ امتیاز اضافه‌ای بابت ادب یا اعتمادبه‌نفس نده — فقط دقت علمی مهمه.`;
+    const res = await gemini(sys,
+      `این مکالمه رو از نظر دقت علمی و صداقت متدولوژیک ارزیابی کن:
+
+مطالعه: ${study.name||'نامشخص'} (${study.type||''})
+جمعیت: ${study.population||''} n=${study.n||''}
+پیامد اولیه: ${study.primaryEndpoint||''}
+نتیجه ثبت‌شده: ${study.result||''}
+
+مکالمه:
+${conv}
+
+گزارش ارزیابی با فرمت دقیق:
+
+امتیاز کلی: [عدد]/100
+
+امتیازات تفکیکی:
+دقت توصیف متدولوژی: [۱-۱۰]
+صداقت در پذیرفتن محدودیت‌ها: [۱-۱۰]
+دقت زبان آماری (عدم overstate): [۱-۱۰]
+آرامش زیر فشار سوالات سخت: [۱-۱۰]
+عمق دانش از همین مطالعه: [۱-۱۰]
+
+✅ نقاطی که مدرپ متدولوژی رو درست توضیح داد:
+•
+•
+
+⚠️ جاهایی که نادرست یا مبهم بود (دقیق بگو کجا):
+•
+•
+
+❌ سوالاتی که جواب قانع‌کننده نگرفت:
+•
+
+💡 یه نکته کلیدی برای تسلط کامل به این مطالعه:
+[یه جمله دقیق و قابل اجرا]`
+    );
+
+    const scoreMatch =
+      res.match(/(\d+)\/100/) ||
+      res.match(/(\d+)\s*از\s*100/) ||
+      res.match(/امتیاز[^:]*[:\s]+(\d+)/);
+    const score = scoreMatch
+      ? Math.min(100, Math.max(10, parseInt(scoreMatch[1])))
+      : 70;
+    const C = 2*Math.PI*40;
+    const offset = C-(score/100)*C;
+    const col = score>=75 ? 'var(--grn)' : score>=50 ? 'var(--ora)' : 'var(--red)';
+
+    const dimLabels = ['دقت متدولوژی','صداقت محدودیت‌ها','دقت زبان آماری','آرامش زیر فشار','عمق دانش مطالعه'];
+    const dimColors = ['var(--sky)','var(--grn)','var(--pur1)','var(--ora)','var(--red)'];
+    const dimScores = dimLabels.map(label => {
+      const m = res.match(new RegExp(label + '[:\\s]+([\\d]+)'));
+      return m ? Math.min(10, Math.max(1, parseInt(m[1]))) : Math.round(score/11);
+    });
+
+    scorecardRawText = res;
+    const prodIdxForRetry  = S.products.indexOf(prod);
+    const studyIdxForRetry = (prod?.clinicalData?.studies || []).indexOf(study);
+    document.getElementById('scorecardBody').innerHTML = `
+      <div class="ring-wrap">
+        <div class="ring-container">
+          <svg class="ring-svg" width="110" height="110" viewBox="0 0 90 90">
+            <circle class="ring-bg" cx="45" cy="45" r="40"/>
+            <circle class="ring-fg" cx="45" cy="45" r="40"
+              style="stroke:${col};stroke-dasharray:${C.toFixed(1)};stroke-dashoffset:${offset.toFixed(1)}"/>
+          </svg>
+          <div class="ring-txt">
+            <div class="ring-num" style="color:${col}">${score}</div>
+            <div class="ring-lbl">از ۱۰۰</div>
+          </div>
+        </div>
+      </div>
+      <div class="score-dims">
+        ${dimLabels.map((label, i) => {
+          const s = dimScores[i];
+          const c = dimColors[i];
+          return '<div class="dim-card"><div class="dim-label">'+label+'</div><div class="dim-bar"><div class="dim-fill" style="width:'+(s*10)+'%;background:'+c+'"></div></div><div class="dim-score" style="color:'+c+'">'+s+'/10</div></div>';
+        }).join('')}
+      </div>
+      <div class="result-box">${res.replace(/\n/g,'<br>')}</div>
+      <button class="btn mt12" onclick="openShareScore(${score}, scorecardRawText)" style="background:var(--sky);box-shadow:0 4px 14px rgba(37,99,235,.3)">
+        <svg><use href="#ic-send"/></svg>اشتراک‌گذاری نتیجه
+      </button>
+      <button class="btn mt8 sec" onclick="closeFs('scorecardOv');closeFs('chatOv');S.isEvidenceDrill=false">
+        <svg><use href="#ic-back"/></svg>بازگشت
+      </button>
+      <button class="btn mt8" onclick="closeFs('scorecardOv');startEvidenceDrill(${prodIdxForRetry}, ${studyIdxForRetry})" style="background:var(--pur-bg);color:var(--pur);box-shadow:none;border:1px solid rgba(109,40,217,.2)">
+        <svg><use href="#ic-repeat"/></svg>دوباره تمرین همین مطالعه
       </button>
     `;
   } catch(e) {
@@ -3048,7 +3228,7 @@ function openProofCard(i) {
   openFs('proofCardOv');
 }
 
-function renderClinicalDataSections(cd) {
+function renderClinicalDataSections(cd, prodIdx) {
   if (!cd) return '';
   const sevColor = { 'شدید': 'var(--red)', 'متوسط': 'var(--ora)', 'خفیف': 'var(--sky)' };
   const section = (icon, title, html) => html ? `
@@ -3074,12 +3254,13 @@ function renderClinicalDataSections(cd) {
 
     ${section('⏱️', 'فارماکوکینتیک', pkRows.length ? pkRows.map(([k,v]) => `<div style="font-size:.78rem;color:var(--txt2);margin-bottom:4px"><b style="color:var(--txt)">${k}:</b> ${v}</div>`).join('') : '')}
 
-    ${section('📊', 'مطالعات کلیدی', (cd.studies||[]).length ? cd.studies.map(s => `
-      <div style="border-bottom:1px solid var(--brd2);padding-bottom:8px;margin-bottom:8px">
+    ${section('📊', 'مطالعات کلیدی', (cd.studies||[]).length ? cd.studies.map((s, si) => `
+      <div style="border-bottom:1px solid var(--brd2);padding-bottom:10px;margin-bottom:10px">
         <div style="font-size:.8rem;font-weight:700;color:var(--txt)">${s.name||'—'} ${s.type?'· '+s.type:''}</div>
         ${s.population?`<div style="font-size:.74rem;color:var(--txt3);margin-top:2px">جمعیت: ${s.population}${s.n?' (n='+s.n+')':''}</div>`:''}
         ${s.primaryEndpoint?`<div style="font-size:.74rem;color:var(--txt3);margin-top:2px">پیامد اولیه: ${s.primaryEndpoint}</div>`:''}
         ${s.result?`<div style="font-size:.78rem;color:var(--grn);margin-top:4px;font-weight:600">${s.result}</div>`:''}
+        ${s.name && prodIdx != null ? `<button class="btn sec" style="margin-top:8px;padding:8px 12px;font-size:.72rem;width:auto" onclick="startEvidenceDrill(${prodIdx}, ${si})"><svg width="14" height="14"><use href="#ic-chat"/></svg>تمرین دفاع از این مطالعه</button>` : ''}
       </div>`).join('') : '')}
 
     ${section('⚠️', 'تداخلات دارویی', (cd.interactions||[]).length ? cd.interactions.map(it => `
@@ -3116,7 +3297,7 @@ function openDrugCard(i) {
 
     <div style="font-size:.74rem;font-weight:800;color:var(--txt2);margin:16px 0 8px">پروفایل بالینی عمیق</div>
     ${prod.clinicalData
-      ? renderClinicalDataSections(prod.clinicalData) + `<button class="btn" style="background:var(--grn)" onclick="openProofCard(${i})"><svg><use href="#ic-pill"/></svg>کارت اثبات (نمایش به پزشک)</button><button class="btn sec mt8" onclick="generateClinicalData(${i}, this)"><svg><use href="#ic-brain"/></svg>به‌روزرسانی پروفایل بالینی</button>`
+      ? renderClinicalDataSections(prod.clinicalData, i) + `<button class="btn" style="background:var(--grn)" onclick="openProofCard(${i})"><svg><use href="#ic-pill"/></svg>کارت اثبات (نمایش به پزشک)</button><button class="btn sec mt8" onclick="generateClinicalData(${i}, this)"><svg><use href="#ic-brain"/></svg>به‌روزرسانی پروفایل بالینی</button>`
       : `<button class="btn" onclick="generateClinicalData(${i}, this)"><svg><use href="#ic-brain"/></svg>تولید پروفایل بالینی کامل (PK، تداخل دارویی، مطالعات)</button>`
     }
 
