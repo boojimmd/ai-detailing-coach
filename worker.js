@@ -31,14 +31,13 @@ export default {
         return await handleAI(body, env);
       }
       if (path === '/ping') {
-        return respond({ ok: true, version: '3.4', storage: !!env.DATA_STORE });
+        return respond({ ok: true, version: '3.5', storage: !!env.DATA_STORE });
       }
       if (path === '/status') {
         return respond({
-          version: '3.4',
+          version: '3.5',
           keys: {
             groq:          !!env.GROQ_KEY,
-            deepseek:      !!env.DEEPSEEK_KEY,
             github_models: !!env.GITHUB_MODELS_KEY,
             claude:        !!env.CLAUDE_KEY,
           },
@@ -134,17 +133,7 @@ async function handleAI({ system, messages, fallbackQuery }, env) {
     }
   } else { errors.push('Groq: کلید تنظیم نشده'); }
 
-  // 2. DeepSeek via OpenModel
-  if (env.DEEPSEEK_KEY) {
-    try {
-      const text = await callDeepSeek(system, messages, env.DEEPSEEK_KEY);
-      return respond({ text, source: 'deepseek' });
-    } catch (e) {
-      errors.push(`DeepSeek: ${e.message}`);
-    }
-  } else { errors.push('DeepSeek: کلید تنظیم نشده'); }
-
-  // 3. GitHub Models GPT-4o
+  // 2. GitHub Models GPT-4o
   if (env.GITHUB_MODELS_KEY) {
     try {
       const text = await callGitHubModels(system, messages, env.GITHUB_MODELS_KEY);
@@ -154,7 +143,7 @@ async function handleAI({ system, messages, fallbackQuery }, env) {
     }
   } else { errors.push('GitHub Models: کلید تنظیم نشده'); }
 
-  // 4. Claude Haiku
+  // 3. Claude Haiku
   if (env.CLAUDE_KEY) {
     try {
       const text = await callClaude(system, messages, env.CLAUDE_KEY);
@@ -188,7 +177,7 @@ async function callGroq(system, messages, key) {
       'Authorization': `Bearer ${key}`
     },
     body: JSON.stringify({
-      model: 'llama3-70b-8192',
+      model: 'llama-3.3-70b-versatile',
       messages: buildMessages(system, messages),
       max_tokens: 3000,
       temperature: 0.8
@@ -199,28 +188,6 @@ async function callGroq(system, messages, key) {
   if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
   const text = data.choices?.[0]?.message?.content;
   if (!text) throw new Error('پاسخی از Groq نرسید');
-  return text;
-}
-
-async function callDeepSeek(system, messages, key) {
-  const res = await fetch('https://api.deepseek.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${key}`
-    },
-    body: JSON.stringify({
-      model: 'deepseek-chat',
-      messages: buildMessages(system, messages),
-      max_tokens: 3000,
-      temperature: 0.8
-    })
-  });
-
-  const data = await safeJson(res);
-  if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
-  const text = data.choices?.[0]?.message?.content;
-  if (!text) throw new Error('پاسخی از DeepSeek نرسید');
   return text;
 }
 
