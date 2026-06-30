@@ -2502,7 +2502,7 @@ async function compareByAI() {
 
   try {
     const sys=`تو متخصص بازاریابی دارویی و مقایسه محصولات هستی. اطلاعات دقیق و عملی می‌دی.`;
-    const groundQuery = `${rival} ${prod.ingredient||''} ایران دارو مقایسه`;
+    const groundQuery = `${rival} ${prod.ingredient||''} دارویاب ایران`;
     const res = await gemini(sys,
       `مقایسه جامع بین دو دارو:
 
@@ -3605,7 +3605,7 @@ YEAR: [سال تأیید یا launch]
 - اگه کمپانی رو نمی‌شناسی بنویس UNKNOWN`;
 
   try {
-    const groundQuery = `${company} داروسازی محصولات لیست ایران`;
+    const groundQuery = `${company} دارویاب محصولات شرکت`;
     const text = await gemini(sys, msg, [], [], null, groundQuery);
 
     if(text.includes('UNKNOWN')) {
