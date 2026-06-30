@@ -1062,6 +1062,18 @@ input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-ca
   <div class="fs-body" id="briefingBody"></div>
 </div>
 
+<!-- Proof Card — برای نمایش مستقیم به پزشک حین ویزیت -->
+<div class="fsov hidden" id="proofCardOv">
+  <div class="fs-top">
+    <button class="fs-back" onclick="closeFs('proofCardOv')"><svg><use href="#ic-back"/></svg></button>
+    <div class="fs-title">
+      <div class="fs-ttxt">کارت اثبات (نمایش به پزشک)</div>
+      <div class="fs-tsub" id="proofCardSub"></div>
+    </div>
+  </div>
+  <div class="fs-body" id="proofCardBody" style="background:#fff"></div>
+</div>
+
 <!-- Compare Fullscreen -->
 <div class="fsov hidden" id="compareOv">
   <div class="fs-top">
@@ -1235,6 +1247,17 @@ input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-ca
     <div class="fgroup">
       <label class="fl">گام بعدی (اختیاری)</label>
       <input class="fi" id="avNextStep" placeholder="مثال: پیگیری تا ۲ هفته دیگه">
+    </div>
+    <div class="fgroup">
+      <label class="fl">تعداد بیمار شروع‌شده (اختیاری)</label>
+      <input class="fi" id="avPatientsStarted" type="number" min="0" placeholder="مثال: ۲">
+    </div>
+    <div class="fgroup">
+      <label class="fl">قول امتحان دارو داد؟</label>
+      <div style="display:flex;gap:8px">
+        <button class="db easy" id="avTrialYes" onclick="selTrialCommit(true,this)" style="flex:1">✅ بله</button>
+        <button class="db med sel" id="avTrialNo" onclick="selTrialCommit(false,this)" style="flex:1">— نه</button>
+      </div>
     </div>
     <button class="btn" id="btnSaveVisit"><svg><use href="#ic-check"/></svg>ذخیره</button>
     <button class="btn sec mt8" onclick="closeSheet('addVisitOv')">انصراف</button>
@@ -2186,7 +2209,7 @@ async function generateScript() {
   const diffMap = {easy:'ساده و دوستانه', med:'کمی محتاط', hard:'سخت‌گیر با اعتراضات جدی'};
 
   try {
-    const sys = `تو یه مشاور ارشد آموزش فروش دارویی هستی با تخصص در بازار ایران. اسکریپت‌های کوبنده، واقعی، و قابل استفاده می‌نویسی. می‌دونی ۹۰٪ ویزیت‌ها زیر ۲ دقیقه‌ن.\nاگه هر claim‌ای خارج از اندیکاسیون ثبت‌شده باشه، با [⚠️ OFF-LABEL] علامت بزن.`;
+    const sys = `تو یه مشاور ارشد آموزش فروش دارویی هستی با تخصص در بازار ایران. اسکریپت‌های کوبنده، واقعی، و قابل استفاده می‌نویسی. می‌دونی ۹۰٪ ویزیت‌ها زیر ۲ دقیقه‌ن.\nاگه هر claim‌ای خارج از اندیکاسیون ثبت‌شده باشه، با [⚠️ OFF-LABEL] علامت بزن.\nطبق اصل Fair Balance (استاندارد PhRMA Code) همیشه باید کنار هر claim مثبت، حداقل یه ریسک/عارضه/احتیاط هم به‌صورت صریح ذکر بشه — این بخش رو هیچ‌وقت حذف نکن.`;
 
     const specialtyHint = getSpecialtyHint();
     const res = await gemini(sys,
@@ -2211,6 +2234,8 @@ async function generateScript() {
 📊 BODY — پیام اصلی + Evidence:
 [شامل یه داده کلینیکال کلیدی]
 
+⚖️ FAIR BALANCE (الزامی — حداقل یه ریسک/عارضه/احتیاط مهم، صریح و واضح):
+
 ⚡ OBJECTION HANDLING (۲ اعتراض احتمالی این پزشک):
 اعتراض ۱: ...
 جواب ۱: ...
@@ -2234,10 +2259,14 @@ async function generateScript() {
     const hasDiabetesContext = diabetesContext.test(res) || diabetesContext.test(prod.indication || '');
     const weightLossClaimPattern = /(داروی\s*کاهش\s*وزن|برای\s*کاهش\s*وزن|درمان\s*چاقی|weight.?loss\s*drug|indicated\s*for\s*weight)/i;
     const hasWeightLossClaim = isGLP1 && weightLossClaimPattern.test(res) && !hasDiabetesContext;
+    // فاز ۱ (نسخه ۲ روود مپ): Fair Balance — طبق PhRMA Code، هر claim مثبت باید با ریسک/عارضه همراه باشه.
+    const fairBalancePattern = /fair balance|عارضه|ریسک|احتیاط|خطر|contraindication|side.?effect|عوارض/i;
+    const hasFairBalance = fairBalancePattern.test(res);
     const idx = S.products.indexOf(prod);
     document.getElementById('scriptBody').innerHTML = `
       ${hasOffLabel ? '<div class="warn-box"><svg><use href=\"#ic-warn\"></use></svg>⚠️ این اسکریپت شامل ادعاهای خارج از اندیکاسیون [OFF-LABEL] است. قبل از استفاده با Medical Affairs مشورت کن.</div>' : ''}
       ${hasWeightLossClaim ? '<div class="warn-box"><svg><use href=\"#ic-warn\"></use></svg>⚠️ Compliance: سماگلوتاید/تیرزپاتید داروی کاهش وزن ثبت‌شده نیست — فقط در اندیکاسیون دیابت detailing کن.</div>' : ''}
+      ${!hasFairBalance ? '<div class="warn-box"><svg><use href=\"#ic-warn\"></use></svg>⚖️ این اسکریپت Fair Balance نداره — قبل از استفاده، یه ریسک/عارضه مهم رو خودت دستی اضافه کن.</div>' : ''}
       <div class="result-box">${res.replace(/\n/g,'<br>')}</div>
       <button class="btn mt12" onclick="closeFs('scriptOv');openSess(${idx},'roleplay')">
         <svg><use href="#ic-chat"/></svg>تمرین رول‌پلی با این اسکریپت
@@ -2839,6 +2868,8 @@ function openVisitList(docIdx) {
         ${v.objection?`<div style="font-size:.72rem;color:var(--ora);margin-top:6px">⚠️ اعتراض: ${v.objection}</div>`:''}
         ${v.commitment?`<div style="font-size:.72rem;color:var(--sky);margin-top:4px">🤝 قول دادی: ${v.commitment}</div>`:''}
         ${v.nextStep?`<div style="font-size:.72rem;color:var(--pur1);margin-top:4px">➡️ گام بعدی: ${v.nextStep}</div>`:''}
+        ${v.trialCommitment?`<div style="font-size:.72rem;color:var(--grn);margin-top:4px">✅ قول امتحان دارو رو داد</div>`:''}
+        ${v.patientsStarted?`<div style="font-size:.72rem;color:var(--grn);margin-top:4px">💊 ${v.patientsStarted} بیمار شروع شد</div>`:''}
       </div>
     `).join('');
   }
@@ -2849,15 +2880,18 @@ function openVisitList(docIdx) {
 function openAddVisit(docIdx) {
   currentDocIdx = docIdx;
   visitOutcome = 'neutral';
+  trialCommitment = false;
   // populate product list
   const sel = document.getElementById('avProd');
   sel.innerHTML = S.products.map((p,i) => `<option value="${i}">${p.brand||p.ingredient}</option>`).join('');
   document.getElementById('avDate').value = new Date().toISOString().split('T')[0];
-  ['avNote','avObjection','avCommitment','avNextStep'].forEach(id => document.getElementById(id).value = '');
+  ['avNote','avObjection','avCommitment','avNextStep','avPatientsStarted'].forEach(id => document.getElementById(id).value = '');
   ['avPos','avNeu','avNeg'].forEach(id => {
     document.getElementById(id).classList.remove('sel','easy','med','hard');
   });
   document.getElementById('avNeu').classList.add('sel','med');
+  ['avTrialYes','avTrialNo'].forEach(id => document.getElementById(id).classList.remove('sel','easy','med'));
+  document.getElementById('avTrialNo').classList.add('sel','med');
   openSheet('addVisitOv');
 }
 
@@ -2869,11 +2903,19 @@ function selOutcome(val, btn) {
   btn.classList.add('sel', val==='positive'?'easy':val==='negative'?'hard':'med');
 }
 
+let trialCommitment = false; // فاز ۳ (نسخه ۲ روود مپ): آیا پزشک قول امتحان دارو روی بیمار رو داد
+function selTrialCommit(val, btn) {
+  trialCommitment = val;
+  ['avTrialYes','avTrialNo'].forEach(id => document.getElementById(id).classList.remove('sel','easy','med'));
+  btn.classList.add('sel', val ? 'easy' : 'med');
+}
+
 function saveVisit() {
   const doc = S.doctors[currentDocIdx];
   if(!doc) return;
   const prodIdx = parseInt(document.getElementById('avProd').value);
   const prod = S.products[prodIdx];
+  const patientsRaw = document.getElementById('avPatientsStarted').value;
   const visit = {
     id: Date.now(),
     prodId: prod?.id,
@@ -2884,13 +2926,15 @@ function saveVisit() {
     objection: document.getElementById('avObjection').value.trim(),
     commitment: document.getElementById('avCommitment').value.trim(),
     nextStep: document.getElementById('avNextStep').value.trim(),
+    patientsStarted: patientsRaw ? parseInt(patientsRaw) : null,
+    trialCommitment: trialCommitment,
     score: null,
   };
   if(!doc.visits) doc.visits = [];
   doc.visits.push(visit);
   saveData(); renderDoctors();
   closeSheet('addVisitOv');
-  ['avObjection','avCommitment','avNextStep','avNote'].forEach(id => document.getElementById(id).value='');
+  ['avObjection','avCommitment','avNextStep','avNote','avPatientsStarted'].forEach(id => document.getElementById(id).value='');
   openVisitList(currentDocIdx);
   toast('ویزیت ثبت شد','ok');
 }
@@ -2935,6 +2979,75 @@ async function generateClinicalData(i, btn) {
 }
 
 // رندر بخش‌های ساختاریافته کارت دارو از prod.clinicalData — اگه موجود باشه.
+// کارت اثبات بصری (IVA سبک) — برای نمایش مستقیم صفحه گوشی به پزشک حین ویزیت.
+// از داده‌های clinicalData (فاز ۳) استفاده می‌کنه؛ هر مطالعه‌ای که توش یه درصد قابل‌استخراج
+// باشه با نوار بزرگ نمایش داده می‌شه، وگرنه به‌صورت کارت آماری ساده.
+function openProofCard(i) {
+  const prod = S.products[i];
+  if (!prod) return;
+  document.getElementById('proofCardSub').textContent = prod.brand || prod.ingredient;
+  const body = document.getElementById('proofCardBody');
+
+  if (!prod.clinicalData) {
+    body.innerHTML = `
+      <div style="padding:40px 20px;text-align:center">
+        <div style="font-size:.86rem;color:#666;margin-bottom:16px">اول باید پروفایل بالینی این محصول ساخته بشه</div>
+        <button class="btn" onclick="closeFs('proofCardOv');openDrugCard(${i})">رفتن به کارت دارو</button>
+      </div>`;
+    openFs('proofCardOv');
+    return;
+  }
+
+  const cd = prod.clinicalData;
+  const studies = cd.studies || [];
+  const pctRe = /(\d{1,3}(?:\.\d+)?)\s*%/;
+
+  const studyBlocks = studies.map(s => {
+    const m = (s.result || '').match(pctRe);
+    if (m) {
+      const pct = Math.min(100, parseFloat(m[1]));
+      return `
+        <div style="margin-bottom:24px">
+          <div style="font-size:1rem;font-weight:800;color:#111;margin-bottom:8px">${s.name||'مطالعه'}</div>
+          <div style="background:#eee;border-radius:10px;height:36px;position:relative;overflow:hidden">
+            <div style="background:linear-gradient(90deg,#6D28D9,#9333EA);height:100%;width:${pct}%;border-radius:10px;display:flex;align-items:center;justify-content:flex-end;padding-${document.dir==='rtl'?'left':'right'}:12px">
+              <span style="color:#fff;font-weight:900;font-size:1.1rem">${m[1]}%</span>
+            </div>
+          </div>
+          <div style="font-size:.78rem;color:#555;margin-top:6px">${s.result}</div>
+        </div>`;
+    }
+    return `
+      <div style="margin-bottom:20px;background:#f7f5ff;border-radius:12px;padding:16px;border:1px solid #e5deff">
+        <div style="font-size:.92rem;font-weight:800;color:#111;margin-bottom:6px">${s.name||'مطالعه'}</div>
+        <div style="font-size:.84rem;color:#444;line-height:1.7">${s.result || s.primaryEndpoint || ''}</div>
+      </div>`;
+  }).join('');
+
+  // Fair Balance همیشه پایین کارت اثبات نمایش داده می‌شه — این صفحه مستقیم جلوی چشم پزشکه.
+  const riskText = (cd.contraindications && cd.contraindications.length)
+    ? cd.contraindications[0]
+    : ((cd.sideEffects && cd.sideEffects[0]) ? `${cd.sideEffects[0].name} (${cd.sideEffects[0].incidence||'—'})` : null);
+
+  body.innerHTML = `
+    <div style="padding:24px 20px">
+      <div style="font-size:1.6rem;font-weight:900;color:#111;margin-bottom:4px">${prod.brand || prod.ingredient}</div>
+      <div style="font-size:.84rem;color:#777;margin-bottom:24px">${prod.ingredient}${prod.indication?' · '+prod.indication:''}</div>
+
+      ${cd.mechanism && cd.mechanism !== 'نامشخص' ? `<div style="font-size:.9rem;color:#333;line-height:1.8;margin-bottom:24px;background:#f7f5ff;border-radius:12px;padding:14px">${cd.mechanism}</div>` : ''}
+
+      ${studyBlocks || '<div style="color:#999;font-size:.84rem">مطالعه‌ای با عدد قابل‌نمایش ثبت نشده</div>'}
+
+      ${riskText ? `
+        <div style="margin-top:24px;background:#fff3f0;border:1px solid #ffd6cc;border-radius:12px;padding:14px">
+          <div style="font-size:.74rem;font-weight:800;color:#c2410c;margin-bottom:4px">⚖️ احتیاط / عارضه مهم</div>
+          <div style="font-size:.82rem;color:#7c2d12">${riskText}</div>
+        </div>` : ''}
+    </div>`;
+
+  openFs('proofCardOv');
+}
+
 function renderClinicalDataSections(cd) {
   if (!cd) return '';
   const sevColor = { 'شدید': 'var(--red)', 'متوسط': 'var(--ora)', 'خفیف': 'var(--sky)' };
@@ -3003,7 +3116,7 @@ function openDrugCard(i) {
 
     <div style="font-size:.74rem;font-weight:800;color:var(--txt2);margin:16px 0 8px">پروفایل بالینی عمیق</div>
     ${prod.clinicalData
-      ? renderClinicalDataSections(prod.clinicalData) + `<button class="btn sec mt8" onclick="generateClinicalData(${i}, this)"><svg><use href="#ic-brain"/></svg>به‌روزرسانی پروفایل بالینی</button>`
+      ? renderClinicalDataSections(prod.clinicalData) + `<button class="btn" style="background:var(--grn)" onclick="openProofCard(${i})"><svg><use href="#ic-pill"/></svg>کارت اثبات (نمایش به پزشک)</button><button class="btn sec mt8" onclick="generateClinicalData(${i}, this)"><svg><use href="#ic-brain"/></svg>به‌روزرسانی پروفایل بالینی</button>`
       : `<button class="btn" onclick="generateClinicalData(${i}, this)"><svg><use href="#ic-brain"/></svg>تولید پروفایل بالینی کامل (PK، تداخل دارویی، مطالعات)</button>`
     }
 
@@ -6712,11 +6825,15 @@ function inferDoctorPattern(doc) {
   const positive = outcomes.filter(o => o === 'positive').length;
   const winRate = outcomes.length ? Math.round((positive / outcomes.length) * 100) : null;
 
+  // فاز ۳ (نسخه ۲ روود مپ): مجموع بیمار شروع‌شده — outcome واقعی‌تر از صرفاً «مثبت/منفی»
+  const totalPatientsStarted = visits.reduce((sum, v) => sum + (v.patientsStarted || 0), 0);
+
   return {
     visitCount: visits.length,
     topTheme: topTheme ? topTheme[0] : null,
     topThemeCount: topTheme ? topTheme[1] : 0,
     winRate,
+    totalPatientsStarted,
   };
 }
 
@@ -6726,6 +6843,7 @@ function renderDoctorPatternBadge(doc) {
   const parts = [];
   if (p.topTheme) parts.push(`📊 الگو: ${p.topTheme} (${p.topThemeCount}/${p.visitCount} ویزیت)`);
   if (p.winRate != null) parts.push(`✅ نرخ موفقیت: ${p.winRate}٪`);
+  if (p.totalPatientsStarted > 0) parts.push(`💊 ${p.totalPatientsStarted} بیمار شروع‌شده`);
   if (!parts.length) return '';
   return `<div style="font-size:.68rem;color:var(--pur1);margin-top:4px;background:var(--pur-bg);display:inline-block;padding:2px 8px;border-radius:6px">${parts.join(' · ')}</div>`;
 }
@@ -6996,7 +7114,7 @@ async function aiEnhanceFlow(btnEl) {
   if(btn) { btn.disabled = true; btn.innerHTML = '<div class="spin"></div> در حال بهبود...'; }
 
   try {
-    const sys = 'تو مشاور ارشد آموزش فروش دارویی هستی. Call Flow رو اختصاصی می‌کنی.';
+    const sys = 'تو مشاور ارشد آموزش فروش دارویی هستی. Call Flow رو اختصاصی می‌کنی. طبق Fair Balance (استاندارد PhRMA Code)، KEYMSG ها باید حداقل یه اشاره به ریسک/عارضه هم داشته باشن، نه فقط مزیت.';
 
     // Bug fix: include the explicitly-selected doctor (cfActiveDoc) so "AI Enhance"
     // actually personalizes to this physician, not just product+specialty.
