@@ -31,13 +31,12 @@ export default {
         return await handleAI(body, env);
       }
       if (path === '/ping') {
-        return respond({ ok: true, version: '3.1', storage: !!env.DATA_STORE });
+        return respond({ ok: true, version: '3.2', storage: !!env.DATA_STORE });
       }
       if (path === '/status') {
         return respond({
-          version: '3.1',
+          version: '3.2',
           keys: {
-            gemini:        !!env.GEMINI_KEY,
             groq:          !!env.GROQ_KEY,
             deepseek:      !!env.DEEPSEEK_KEY,
             github_models: !!env.GITHUB_MODELS_KEY,
@@ -105,17 +104,7 @@ async function handleData(request, url, env) {
 async function handleAI({ system, messages, fallbackQuery }, env) {
   const errors = [];
 
-  // 1. Gemini 2.5 Flash
-  if (env.GEMINI_KEY) {
-    try {
-      const text = await callGemini(system, messages, env.GEMINI_KEY);
-      return respond({ text, source: 'gemini' });
-    } catch (e) {
-      errors.push(`Gemini: ${e.message}`);
-    }
-  } else { errors.push('Gemini: کلید تنظیم نشده'); }
-
-  // 2. Groq Llama
+  // 1. Groq Llama
   if (env.GROQ_KEY) {
     try {
       const text = await callGroq(system, messages, env.GROQ_KEY);
@@ -125,7 +114,7 @@ async function handleAI({ system, messages, fallbackQuery }, env) {
     }
   } else { errors.push('Groq: کلید تنظیم نشده'); }
 
-  // 3. DeepSeek via OpenModel
+  // 2. DeepSeek via OpenModel
   if (env.DEEPSEEK_KEY) {
     try {
       const text = await callDeepSeek(system, messages, env.DEEPSEEK_KEY);
@@ -135,7 +124,7 @@ async function handleAI({ system, messages, fallbackQuery }, env) {
     }
   } else { errors.push('DeepSeek: کلید تنظیم نشده'); }
 
-  // 4. GitHub Models GPT-4o
+  // 3. GitHub Models GPT-4o
   if (env.GITHUB_MODELS_KEY) {
     try {
       const text = await callGitHubModels(system, messages, env.GITHUB_MODELS_KEY);
@@ -145,7 +134,7 @@ async function handleAI({ system, messages, fallbackQuery }, env) {
     }
   } else { errors.push('GitHub Models: کلید تنظیم نشده'); }
 
-  // 5. Claude Haiku
+  // 4. Claude Haiku
   if (env.CLAUDE_KEY) {
     try {
       const text = await callClaude(system, messages, env.CLAUDE_KEY);
@@ -171,32 +160,6 @@ async function handleAI({ system, messages, fallbackQuery }, env) {
 // ═══════════════════════════════════════════════════
 //  AI PROVIDERS
 // ═══════════════════════════════════════════════════
-async function callGemini(system, messages, key) {
-  const contents = messages.map(m => ({
-    role: m.role === 'assistant' ? 'model' : 'user',
-    parts: [{ text: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) }]
-  }));
-
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        system_instruction: { parts: [{ text: system }] },
-        contents,
-        generationConfig: { temperature: 0.8, maxOutputTokens: 3000 }
-      })
-    }
-  );
-
-  const data = await safeJson(res);
-  if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
-  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) throw new Error('پاسخی از Gemini نرسید');
-  return text;
-}
-
 async function callGroq(system, messages, key) {
   const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
