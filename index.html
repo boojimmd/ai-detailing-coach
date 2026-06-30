@@ -2402,6 +2402,19 @@ async function generateBriefing() {
   const docInfo = doc?.pers || doc?.personality || specLabel(doc?.spec) || doc?.desc || '';
   const docNote = doc?.note || '';
 
+  // پیدا کردن آخرین ویزیت ثبت‌شده برای همین پزشک — ترجیحاً برای همین محصول،
+  // وگرنه آخرین ویزیت کلی. این همون «continuity بین ویزیت‌ها»یی که لازم داریم.
+  let lastVisitSummary = '';
+  if (doc?.visits?.length) {
+    const sorted = [...doc.visits].sort((a, b) => new Date(b.date) - new Date(a.date));
+    const sameProduct = sorted.find(v => v.prodId === prod?.id);
+    const lv = sameProduct || sorted[0];
+    if (lv) {
+      const outcomeLabel = { positive: 'مثبت', neutral: 'خنثی', negative: 'منفی' }[lv.outcome] || lv.outcome;
+      lastVisitSummary = `تاریخ: ${lv.date} | محصول: ${lv.prodName||'—'} | نتیجه: ${outcomeLabel}${lv.score!=null?' | امتیاز: '+lv.score:''}${lv.note?' | یادداشت: '+lv.note:''}`;
+    }
+  }
+
   document.getElementById('briefingSub').textContent = `${prod?.brand||prod?.ingredient} × ${docName}`;
   document.getElementById('briefingBody').innerHTML = `<div class="empty"><div class="empty-ic"><div class="spin dark" style="width:32px;height:32px;border-width:3px"></div></div><div class="empty-txt" style="margin-top:12px">در حال آماده‌سازی...</div></div>`;
   openFs('briefingOv');
@@ -2418,7 +2431,8 @@ async function generateBriefing() {
 
 پزشک: ${docName}
 مشخصات: ${docInfo}
-نکات ویزیت قبلی: ${docNote || 'ویزیت قبلی نداریم'}\n${lastVisit ? 'داده ویزیت قبلی: '+lastVisit : ''}
+نکات ویزیت قبلی: ${docNote || 'ویزیت قبلی نداریم'}
+${lastVisitSummary ? 'داده آخرین ویزیت ثبت‌شده: '+lastVisitSummary : 'هنوز ویزیتی برای این پزشک ثبت نشده'}
 
 بریفینگ باید شامل:
 
