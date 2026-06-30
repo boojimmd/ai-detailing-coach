@@ -31,11 +31,11 @@ export default {
         return await handleAI(body, env);
       }
       if (path === '/ping') {
-        return respond({ ok: true, version: '3.8', storage: !!env.DATA_STORE });
+        return respond({ ok: true, version: '3.9', storage: !!env.DATA_STORE });
       }
       if (path === '/status') {
         return respond({
-          version: '3.8',
+          version: '3.9',
           keys: {
             cf_workers_ai: !!env.AI,
             groq:          !!env.GROQ_KEY,
@@ -124,6 +124,11 @@ async function handleData(request, url, env) {
 //  AI FALLBACK CASCADE
 // ═══════════════════════════════════════════════════
 async function handleAI({ system, messages, fallbackQuery }, env) {
+  // Vision requests (image/PDF) → dedicated vision handler
+  if (isVisionRequest(messages)) {
+    return await handleVision({ system, messages }, env);
+  }
+
   const errors = [];
 
   // 1. Cloudflare Workers AI (داخلی، بدون کلید خارجی)
@@ -197,6 +202,87 @@ async function handleAI({ system, messages, fallbackQuery }, env) {
   }
 
   return respond({ error: 'همه AI ها در دسترس نیستند:\n' + errors.join('\n') }, 503);
+}
+
+
+// ── Vision helpers ──────────────────────────────────────────────────────────
+function isVisionRequest(messages) {
+  return messages.some(m => Array.isArray(m.content));
+}
+
+// Convert Claude multimodal format → OpenAI image_url format
+function toVisionMessages(system, messages) {
+  return [
+    { role: 'system', content: sanitize(system) },
+    ...messages.map(m => {
+      if (!Array.isArray(m.content)) {
+        return { role: m.role, content: sanitize(typeof m.content === 'string' ? m.content : String(m.content)) };
+      }
+      const parts = m.content.map(part => {
+        if (part.type === 'text')
+          return { type: 'text', text: sanitize(part.text || '') };
+        if (part.type === 'image') {
+          const { media_type, data } = part.source;
+          return { type: 'image_url', image_url: { url: `data:${media_type};base64,${data}`, detail: 'high' } };
+        }
+        if (part.type === 'document') {
+          // PDF: GPT-4o can't read raw PDF — send as base64 image hint
+          const { data } = part.source;
+          return { type: 'image_url', image_url: { url: `data:application/pdf;base64,${data}` } };
+        }
+        return { type: 'text', text: '' };
+      }).filter(p => p.type !== 'text' || p.text);
+      return { role: m.role, content: parts };
+    })
+  ];
+}
+
+async function handleVision({ system, messages }, env) {
+  const errors = [];
+
+  // GitHub Models GPT-4o — supports vision
+  if (env.GITHUB_MODELS_KEY) {
+    try {
+      const visionMsgs = toVisionMessages(system, messages);
+      const res = await fetch('https://models.github.ai/inference/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/vnd.github+json',
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${env.GITHUB_MODELS_KEY}`,
+          'X-GitHub-Api-Version': '2022-11-28'
+        },
+        body: JSON.stringify({ model: 'openai/gpt-4o', messages: visionMsgs, max_tokens: 3000 })
+      });
+      const data = await safeJson(res);
+      if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+      const text = data.choices?.[0]?.message?.content;
+      if (!text) throw new Error('پاسخی از GPT-4o نرسید');
+      return respond({ text, source: 'github-models-vision' });
+    } catch(e) { errors.push(`GitHub Models Vision: ${e.message}`); }
+  } else { errors.push('GitHub Models: کلید تنظیم نشده'); }
+
+  // Claude — supports both image and PDF natively
+  if (env.CLAUDE_KEY) {
+    try {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': env.CLAUDE_KEY,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 3000, system, messages })
+      });
+      const data = await safeJson(res);
+      if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+      const text = data.content?.[0]?.text;
+      if (!text) throw new Error('پاسخی از Claude نرسید');
+      return respond({ text, source: 'claude-vision' });
+    } catch(e) { errors.push(`Claude Vision: ${e.message}`); }
+  } else { errors.push('Claude: کلید تنظیم نشده'); }
+
+  return respond({ error: 'آپلود فایل نیاز به AI با قابلیت Vision دارد:\n' + errors.join('\n') }, 503);
 }
 
 // ═══════════════════════════════════════════════════
