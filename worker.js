@@ -31,11 +31,11 @@ export default {
         return await handleAI(body, env);
       }
       if (path === '/ping') {
-        return respond({ ok: true, version: '4.0', storage: !!env.DATA_STORE });
+        return respond({ ok: true, version: '4.1', storage: !!env.DATA_STORE });
       }
       if (path === '/status') {
         return respond({
-          version: '4.0',
+          version: '4.1',
           keys: {
             cf_workers_ai: !!env.AI,
             groq:          !!env.GROQ_KEY,
@@ -43,6 +43,7 @@ export default {
             deepseek:      !!env.DEEPSEEK_KEY,
             github_models: !!env.GITHUB_MODELS_KEY,
             claude:        !!env.CLAUDE_KEY,
+            google_cse:    !!(env.GOOGLE_CSE_KEY && env.GOOGLE_CSE_CX),
           },
           storage: !!env.DATA_STORE,
         });
@@ -121,11 +122,22 @@ async function handleData(request, url, env) {
 }
 
 // ═══════════════════════════════════════════════════
-//  WEB SEARCH GROUNDING (DuckDuckGo HTML — بدون نیاز به کلید)
-//  برای سوالاتی مثل «رقبای این دارو در ایران» یا «محصولات این کمپانی»
-//  که نباید فقط بر اساس دانش training مدل جواب داده بشن.
+//  WEB SEARCH GROUNDING
+//  اولویت با Google Custom Search JSON API (قانونی، رایگان تا ۱۰۰ جستجو/روز،
+//  بدون نیاز به کارت بانکی). اگه کلیدش تنظیم نشده باشه یا fail بشه،
+//  fallback به DuckDuckGo HTML (بدون کلید، ولی کمتر قابل‌اتکا).
 // ═══════════════════════════════════════════════════
-async function webSearch(query, maxResults = 5) {
+async function webSearchGoogle(query, env, maxResults = 5) {
+  if (!env.GOOGLE_CSE_KEY || !env.GOOGLE_CSE_CX) throw new Error('Google CSE تنظیم نشده');
+  const url = `https://www.googleapis.com/customsearch/v1?key=${env.GOOGLE_CSE_KEY}&cx=${env.GOOGLE_CSE_CX}&q=${encodeURIComponent(query)}&num=${maxResults}`;
+  const res = await fetch(url);
+  const data = await safeJson(res);
+  if (data.error) throw new Error(data.error.message || 'خطای Google CSE');
+  const items = data.items || [];
+  return items.map(it => ({ title: it.title || '', snippet: it.snippet || '' })).filter(r => r.title);
+}
+
+async function webSearchDuckDuckGo(query, maxResults = 5) {
   const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
   const res = await fetch(url, {
     headers: {
@@ -148,10 +160,20 @@ async function webSearch(query, maxResults = 5) {
   return results;
 }
 
-function buildGroundingContext(results, query) {
+async function webSearch(query, env, maxResults = 5) {
+  try {
+    const results = await webSearchGoogle(query, env, maxResults);
+    if (results.length) return { results, source: 'google' };
+  } catch (e) { /* fall through to DuckDuckGo */ }
+
+  const results = await webSearchDuckDuckGo(query, maxResults);
+  return { results, source: 'duckduckgo' };
+}
+
+function buildGroundingContext(results, query, source) {
   if (!results.length) return '';
   const lines = results.map((r, i) => `${i + 1}. ${r.title}\n   ${r.snippet}`).join('\n');
-  return `\n\n[نتایج جستجوی وب برای «${query}» — ${new Date().toISOString().slice(0,10)}]\n${lines}\n\nاز این نتایج به‌عنوان منبع داده واقعی و به‌روز استفاده کن. اگه نتایج کافی نبود یا نامرتبط بود، صراحتاً بگو اطلاعات کافی پیدا نشد به‌جای حدس زدن.\n`;
+  return `\n\n[نتایج جستجوی وب (${source}) برای «${query}» — ${new Date().toISOString().slice(0,10)}]\n${lines}\n\nاز این نتایج به‌عنوان منبع داده واقعی و به‌روز استفاده کن. اگه نتایج کافی نبود یا نامرتبط بود، صراحتاً بگو اطلاعات کافی پیدا نشد به‌جای حدس زدن.\n`;
 }
 
 // ═══════════════════════════════════════════════════
@@ -167,8 +189,8 @@ async function handleAI({ system, messages, fallbackQuery, groundQuery }, env) {
   // (non-fatal — اگه جستجو fail بشه، با همون system prompt قبلی ادامه می‌ده)
   if (groundQuery) {
     try {
-      const results = await webSearch(groundQuery);
-      system = system + buildGroundingContext(results, groundQuery);
+      const { results, source } = await webSearch(groundQuery, env);
+      system = system + buildGroundingContext(results, groundQuery, source);
     } catch (e) {
       // جستجو fail شد — بدون grounding ادامه بده، کرش نکن
       system = system + `\n\n[توجه: جستجوی وب برای «${groundQuery}» ناموفق بود — بر اساس دانش داخلی جواب بده و صراحتاً بگو ممکنه به‌روز نباشه.]\n`;
