@@ -2221,7 +2221,8 @@ async function generateScript() {
 [یه درخواست مشخص و واقع‌بینانه]
 
 ⏱ کل وقت: زیر ۹۰ ثانیه
-فارسی، واقع‌بینانه، قابل استفاده فوری.`
+فارسی، واقع‌بینانه، قابل استفاده فوری.`,
+      [], [], null, `${prod.brand || prod.ingredient} ${prod.ingredient} اخبار جدید مطالعه`
     );
     // Check compliance: OFF-LABEL flags + weight-loss claim for GLP-1s
     const hasOffLabel = res.includes('[⚠️ OFF-LABEL]');
@@ -7024,7 +7025,7 @@ OBJ2A: [جواب]
 COMMIT: [تعهد اختصاصی]
 FALLBACK: [fallback]`;
 
-    const text = await gemini(sys, msg);
+    const text = await gemini(sys, msg, [], [], null, `${prod.brand||prod.ingredient} ${prod.ingredient} اخبار جدید مطالعه`);
 
     // Parse and update — uses lookahead to the next known field label so multi-line
     // values (e.g. a 2-sentence OBJ1A or COMMIT) aren't truncated to their first line.
