@@ -31,13 +31,14 @@ export default {
         return await handleAI(body, env);
       }
       if (path === '/ping') {
-        return respond({ ok: true, version: '3.6', storage: !!env.DATA_STORE });
+        return respond({ ok: true, version: '3.7', storage: !!env.DATA_STORE });
       }
       if (path === '/status') {
         return respond({
-          version: '3.6',
+          version: '3.7',
           keys: {
             groq:          !!env.GROQ_KEY,
+            openrouter:    !!env.OPENROUTER_KEY,
             deepseek:      !!env.DEEPSEEK_KEY,
             github_models: !!env.GITHUB_MODELS_KEY,
             claude:        !!env.CLAUDE_KEY,
@@ -134,7 +135,17 @@ async function handleAI({ system, messages, fallbackQuery }, env) {
     }
   } else { errors.push('Groq: کلید تنظیم نشده'); }
 
-  // 2. DeepSeek
+  // 2. OpenRouter (35+ free models)
+  if (env.OPENROUTER_KEY) {
+    try {
+      const text = await callOpenRouter(system, messages, env.OPENROUTER_KEY);
+      return respond({ text, source: 'openrouter' });
+    } catch (e) {
+      errors.push(`OpenRouter: ${e.message}`);
+    }
+  } else { errors.push('OpenRouter: کلید تنظیم نشده'); }
+
+  // 3. DeepSeek
   if (env.DEEPSEEK_KEY) {
     try {
       const text = await callDeepSeek(system, messages, env.DEEPSEEK_KEY);
@@ -144,7 +155,7 @@ async function handleAI({ system, messages, fallbackQuery }, env) {
     }
   } else { errors.push('DeepSeek: کلید تنظیم نشده'); }
 
-  // 3. GitHub Models GPT-4o
+  // 4. GitHub Models GPT-4o
   if (env.GITHUB_MODELS_KEY) {
     try {
       const text = await callGitHubModels(system, messages, env.GITHUB_MODELS_KEY);
@@ -154,7 +165,7 @@ async function handleAI({ system, messages, fallbackQuery }, env) {
     }
   } else { errors.push('GitHub Models: کلید تنظیم نشده'); }
 
-  // 4. Claude Haiku
+  // 5. Claude Haiku
   if (env.CLAUDE_KEY) {
     try {
       const text = await callClaude(system, messages, env.CLAUDE_KEY);
@@ -199,6 +210,30 @@ async function callGroq(system, messages, key) {
   if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
   const text = data.choices?.[0]?.message?.content;
   if (!text) throw new Error('پاسخی از Groq نرسید');
+  return text;
+}
+
+async function callOpenRouter(system, messages, key) {
+  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${key}`,
+      'HTTP-Referer': 'https://boojimmd.github.io/ai-detailing-coach/',
+      'X-Title': 'AI Detailing Coach'
+    },
+    body: JSON.stringify({
+      model: 'openrouter/auto',
+      messages: buildMessages(system, messages),
+      max_tokens: 3000,
+      temperature: 0.8
+    })
+  });
+
+  const data = await safeJson(res);
+  if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+  const text = data.choices?.[0]?.message?.content;
+  if (!text) throw new Error('پاسخی از OpenRouter نرسید');
   return text;
 }
 
