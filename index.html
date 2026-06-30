@@ -1925,6 +1925,63 @@ function buildProductAnalysisPrompt(brand, ingredient, indication, specialty) {
   };
 }
 
+// پرامپت پروفایل بالینی ساختاریافته (Phase 3) — خروجی JSON خالص، برای رندر بخش‌بندی‌شده
+// در کارت دارو: فارماکوکینتیک، تداخل دارویی، چند مطالعه با جزئیات، Contraindication، گایدلاین.
+// این مکمل prod.analysis (متن آزاد) هست، جایگزینش نمی‌کنه — همه‌جای دیگه اپ که از
+// prod.analysis استفاده می‌کنه دست‌نخورده می‌مونه.
+function buildClinicalDataPrompt(brand, ingredient, indication, specialty) {
+  return {
+    sys: `تو یه متخصص فارماکولوژی بالینی هستی. فقط و فقط یک JSON معتبر برمی‌گردونی — هیچ متن قبل یا بعدش، هیچ \`\`\`json fence، فقط خود آبجکت JSON. اگه به اطلاعاتی مطمئن نیستی، مقدار رو "نامشخص" یا آرایه خالی بذار، هیچ‌وقت حدس الکی نزن.`,
+    msg: `برای داروی زیر، این JSON دقیق رو پر کن (کلیدها انگلیسی بمونن، مقادیر فارسی):
+
+نام برند: ${brand || 'نامشخص'}
+ماده موثره: ${ingredient}
+اندیکاسیون: ${indication || 'عمومی'}
+تخصص هدف: ${specialty || 'عمومی'}
+
+{
+  "mechanism": "مکانیزم اثر دقیق، ۲-۳ جمله فارماکودینامیک",
+  "pharmacokinetics": {
+    "halfLife": "نیمه‌عمر",
+    "tmax": "زمان رسیدن به اوج غلظت",
+    "metabolism": "مسیر متابولیسم (کبدی/کلیوی/...)",
+    "renalAdjustment": "تنظیم دوز در نارسایی کلیوی",
+    "hepaticAdjustment": "تنظیم دوز در نارسایی کبدی"
+  },
+  "studies": [
+    {"name": "نام کارآزمایی", "type": "نوع مطالعه (RCT فاز ۳/متاآنالیز/...)", "n": "تعداد بیماران", "population": "جمعیت مطالعه", "primaryEndpoint": "پیامد اولیه", "result": "نتیجه دقیق با عدد"}
+  ],
+  "interactions": [
+    {"drug": "نام دارو یا دسته دارویی", "severity": "خفیف یا متوسط یا شدید", "effect": "اثر تداخل"}
+  ],
+  "contraindications": ["موارد منع مصرف، هرکدوم یک رشته"],
+  "blackBoxWarning": "هشدار جعبه سیاه FDA در صورت وجود، وگرنه null",
+  "sideEffects": [{"name": "عارضه", "incidence": "شیوع تقریبی"}],
+  "dosing": {"standard": "دوز استاندارد", "titration": "نحوه تیتراسیون", "renalAdjustment": "تنظیم در نارسایی کلیوی", "hepaticAdjustment": "تنظیم در نارسایی کبدی"},
+  "idealPatient": "پروفایل بیمار ایده‌آل برای این دارو",
+  "guidelineAlignment": "جایگاه این دارو طبق مهم‌ترین گایدلاین تخصص مربوطه (مثلاً ADA/EASD برای دیابت، ESC برای قلب، GOLD برای ریه)"
+}
+
+فقط JSON. هیچ توضیح اضافه‌ای قبل یا بعدش ننویس.`
+  };
+}
+
+// استخراج امن JSON از پاسخ AI — حتی اگه provider با وجود دستور صریح،
+// توی \`\`\`json fence بپیچتش یا متن اضافه قبل/بعدش بذاره.
+function safeParseJsonFromAi(text) {
+  if (!text) return null;
+  let cleaned = text.trim()
+    .replace(/^```json\s*/i, '').replace(/^```\s*/i, '')
+    .replace(/```\s*$/i, '');
+  const start = cleaned.indexOf('{');
+  const end   = cleaned.lastIndexOf('}');
+  if (start === -1 || end === -1 || end < start) return null;
+  cleaned = cleaned.slice(start, end + 1);
+  try { return JSON.parse(cleaned); } catch (e) { return null; }
+}
+
+
+
 async function analyzeProd() {
   const brand      = document.getElementById('apBrand').value.trim();
   const ingredient = document.getElementById('apIngredient').value.trim();
@@ -2854,6 +2911,79 @@ function saveVisitFromScorecard(score) {
 }
 
 // ═══ DRUG CARD ═══
+async function generateClinicalData(i, btn) {
+  const prod = S.products[i];
+  if (!prod) return;
+  if (btn) { btn.disabled = true; btn.innerHTML = '<div class="spin"></div> در حال ساخت پروفایل بالینی...'; }
+
+  try {
+    const { sys, msg } = buildClinicalDataPrompt(prod.brand, prod.ingredient, prod.indication, specLabel(prod.specialty));
+    const raw = await gemini(sys, msg);
+    const parsed = safeParseJsonFromAi(raw);
+    if (!parsed) throw new Error('پاسخ AI به فرمت JSON معتبر نبود — دوباره امتحان کن');
+    prod.clinicalData = parsed;
+    saveData();
+    openDrugCard(i); // re-render with the new structured sections
+    toast('پروفایل بالینی ساخته شد', 'ok');
+  } catch (e) {
+    toast('خطا: ' + e.message, 'err');
+    if (btn) { btn.disabled = false; btn.innerHTML = '<svg><use href="#ic-brain"/></svg>تولید پروفایل بالینی کامل (PK، تداخل دارویی، مطالعات)'; }
+  }
+}
+
+// رندر بخش‌های ساختاریافته کارت دارو از prod.clinicalData — اگه موجود باشه.
+function renderClinicalDataSections(cd) {
+  if (!cd) return '';
+  const sevColor = { 'شدید': 'var(--red)', 'متوسط': 'var(--ora)', 'خفیف': 'var(--sky)' };
+  const section = (icon, title, html) => html ? `
+    <div style="background:var(--sur2);border:1px solid var(--brd);border-radius:12px;padding:14px;margin-bottom:10px">
+      <div style="font-size:.74rem;font-weight:800;color:var(--pur1);margin-bottom:8px">${icon} ${title}</div>
+      ${html}
+    </div>` : '';
+
+  const pk = cd.pharmacokinetics || {};
+  const pkRows = [
+    ['نیمه‌عمر', pk.halfLife], ['Tmax', pk.tmax], ['متابولیسم', pk.metabolism],
+    ['تنظیم در نارسایی کلیوی', pk.renalAdjustment], ['تنظیم در نارسایی کبدی', pk.hepaticAdjustment],
+  ].filter(([,v]) => v && v !== 'نامشخص');
+
+  const dosing = cd.dosing || {};
+  const dosingRows = [
+    ['دوز استاندارد', dosing.standard], ['تیتراسیون', dosing.titration],
+    ['تنظیم کلیوی', dosing.renalAdjustment], ['تنظیم کبدی', dosing.hepaticAdjustment],
+  ].filter(([,v]) => v && v !== 'نامشخص');
+
+  return `
+    ${section('🔬', 'مکانیزم اثر', cd.mechanism && cd.mechanism !== 'نامشخص' ? `<div style="font-size:.8rem;color:var(--txt2);line-height:1.7">${cd.mechanism}</div>` : '')}
+
+    ${section('⏱️', 'فارماکوکینتیک', pkRows.length ? pkRows.map(([k,v]) => `<div style="font-size:.78rem;color:var(--txt2);margin-bottom:4px"><b style="color:var(--txt)">${k}:</b> ${v}</div>`).join('') : '')}
+
+    ${section('📊', 'مطالعات کلیدی', (cd.studies||[]).length ? cd.studies.map(s => `
+      <div style="border-bottom:1px solid var(--brd2);padding-bottom:8px;margin-bottom:8px">
+        <div style="font-size:.8rem;font-weight:700;color:var(--txt)">${s.name||'—'} ${s.type?'· '+s.type:''}</div>
+        ${s.population?`<div style="font-size:.74rem;color:var(--txt3);margin-top:2px">جمعیت: ${s.population}${s.n?' (n='+s.n+')':''}</div>`:''}
+        ${s.primaryEndpoint?`<div style="font-size:.74rem;color:var(--txt3);margin-top:2px">پیامد اولیه: ${s.primaryEndpoint}</div>`:''}
+        ${s.result?`<div style="font-size:.78rem;color:var(--grn);margin-top:4px;font-weight:600">${s.result}</div>`:''}
+      </div>`).join('') : '')}
+
+    ${section('⚠️', 'تداخلات دارویی', (cd.interactions||[]).length ? cd.interactions.map(it => `
+      <div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:6px">
+        <span style="background:${sevColor[it.severity]||'var(--txt3)'};color:#fff;font-size:.62rem;font-weight:700;padding:2px 8px;border-radius:6px;white-space:nowrap">${it.severity||'—'}</span>
+        <div style="font-size:.78rem;color:var(--txt2)"><b style="color:var(--txt)">${it.drug}:</b> ${it.effect}</div>
+      </div>`).join('') : '')}
+
+    ${section('🚫', 'موارد منع مصرف', (cd.contraindications||[]).length ? `<ul style="margin:0;padding-${document.dir==='rtl'?'right':'left'}:18px;font-size:.78rem;color:var(--txt2);line-height:1.8">${cd.contraindications.map(c=>`<li>${c}</li>`).join('')}</ul>` : '')}
+
+    ${cd.blackBoxWarning && cd.blackBoxWarning !== 'نامشخص' && cd.blackBoxWarning !== 'null' ? `<div class="warn-box" style="margin-bottom:10px"><svg><use href="#ic-warn"/></svg>⬛ Black Box Warning: ${cd.blackBoxWarning}</div>` : ''}
+
+    ${section('💊', 'دوز و تجویز', dosingRows.length ? dosingRows.map(([k,v]) => `<div style="font-size:.78rem;color:var(--txt2);margin-bottom:4px"><b style="color:var(--txt)">${k}:</b> ${v}</div>`).join('') : '')}
+
+    ${section('🎯', 'بیمار ایده‌آل', cd.idealPatient && cd.idealPatient !== 'نامشخص' ? `<div style="font-size:.8rem;color:var(--txt2);line-height:1.7">${cd.idealPatient}</div>` : '')}
+
+    ${section('📋', 'جایگاه در گایدلاین', cd.guidelineAlignment && cd.guidelineAlignment !== 'نامشخص' ? `<div style="font-size:.8rem;color:var(--txt2);line-height:1.7">${cd.guidelineAlignment}</div>` : '')}
+  `;
+}
+
 function openDrugCard(i) {
   const prod = S.products[i];
   document.getElementById('dcTitle').textContent = prod.brand || prod.ingredient;
@@ -2867,6 +2997,13 @@ function openDrugCard(i) {
     </div>
     ${src.isNonAi ? `<div class="warn-box"><svg><use href="#ic-warn"/></svg>🔧 این تحلیل از پایگاه داده دارویی FDA (ترجمه‌شده) است — نه تحلیل هوش مصنوعی. وقتی AI در دسترس باشد، دوباره تلاش کن تا نسخه کامل‌تر جایگزین شود.</div>` : ''}
     <div class="result-box">${(src.text||'تحلیل موجود نیست').replace(/\n/g,'<br>')}</div>
+
+    <div style="font-size:.74rem;font-weight:800;color:var(--txt2);margin:16px 0 8px">پروفایل بالینی عمیق</div>
+    ${prod.clinicalData
+      ? renderClinicalDataSections(prod.clinicalData) + `<button class="btn sec mt8" onclick="generateClinicalData(${i}, this)"><svg><use href="#ic-brain"/></svg>به‌روزرسانی پروفایل بالینی</button>`
+      : `<button class="btn" onclick="generateClinicalData(${i}, this)"><svg><use href="#ic-brain"/></svg>تولید پروفایل بالینی کامل (PK، تداخل دارویی، مطالعات)</button>`
+    }
+
     <button class="btn mt12" onclick="copyText('dcBody')"><svg><use href="#ic-copy"/></svg>کپی کارت</button>
     <button class="btn sec mt8" onclick="shareViaWhatsApp(${i})"><svg><use href="#ic-send"/></svg>ارسال واتساپ</button>
   `;
