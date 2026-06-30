@@ -910,7 +910,7 @@ input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-ca
     <div id="apTab1" class="hidden">
       <div class="info-box" style="margin-bottom:14px">
         <svg><use href="#ic-info"/></svg>
-        عکس یا PDF کاتالوگ دارو رو آپلود کن — AI همه اطلاعات رو استخراج می‌کنه
+        چند عکس از صفحات کاتالوگ (یا یه PDF) آپلود کن — AI همه‌شونو با هم می‌خونه و یه تحلیل واحد می‌سازه
       </div>
       <div id="apFilePreview" class="hidden" style="margin-bottom:12px">
         <div class="file-preview">
@@ -920,10 +920,10 @@ input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-ca
         </div>
       </div>
       <div class="upzone" id="apUpzone">
-        <input type="file" id="apFile" accept="image/*,.pdf" onchange="handleApFile(event)">
+        <input type="file" id="apFile" accept="image/*,.pdf" multiple onchange="handleApFile(event)">
         <div class="upzone-ic"><svg><use href="#ic-upload"/></svg></div>
-        <div class="upzone-txt">عکس یا PDF کاتالوگ دارو</div>
-        <div class="upzone-sub">JPG · PNG · PDF · حداکثر ۴MB</div>
+        <div class="upzone-txt">عکس‌ها یا PDF کاتالوگ دارو</div>
+        <div class="upzone-sub">می‌تونی چند عکس باهم انتخاب کنی · JPG · PNG · PDF</div>
       </div>
       <button class="btn mt12 hidden" id="btnAnalyzeCatalog">
         <svg><use href="#ic-brain"/></svg>استخراج اطلاعات از کاتالوگ
@@ -7368,16 +7368,19 @@ function readFileAsBase64(file) {
 }
 
 // Call AI with file (image or PDF) + text prompt
-async function geminiWithFile(sys, msg, base64, mimeType) {
+async function geminiWithFile(sys, msg, files) {
   if (!isWorkerConfigured()) {
     throw new Error('اتصال AI هنوز راه\u200cاندازی نشده — آدرس Cloudflare Worker رو در تنظیمات کد وارد کن');
   }
-  // Build Claude-format multimodal message
-  const filePart = mimeType === 'application/pdf'
-    ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } }
-    : { type: 'image',    source: { type: 'base64', media_type: mimeType, data: base64 } };
+  // files: آرایه‌ای از {base64, mimeType} — چند عکس/فایل می‌تونن توی یه پیام واحد بفرستن
+  const list = Array.isArray(files) ? files : [files];
+  const fileParts = list.filter(Boolean).map(f =>
+    f.mimeType === 'application/pdf'
+      ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: f.base64 } }
+      : { type: 'image',    source: { type: 'base64', media_type: f.mimeType, data: f.base64 } }
+  );
 
-  const messages = [{ role: 'user', content: [filePart, { type: 'text', text: msg }] }];
+  const messages = [{ role: 'user', content: [...fileParts, { type: 'text', text: msg }] }];
 
   const res = await fetch(PROXY, {
     method: 'POST',
@@ -7390,9 +7393,9 @@ async function geminiWithFile(sys, msg, base64, mimeType) {
   return data.text;
 }
 
-// ═══ ADD PRODUCT — CATALOG UPLOAD (Tesseract OCR + AI analysis) ═══
-let apFileData  = null; // base64 (fallback for vision AI)
-let apOcrText   = null; // extracted text via Tesseract (preferred path)
+// ═══ ADD PRODUCT — CATALOG UPLOAD (Tesseract OCR + AI analysis، چند فایل) ═══
+let apFileData  = []; // آرایه‌ای از {base64, mimeType} — fallback برای vision AI، یکی به‌ازای هر فایل
+let apOcrText   = null; // متن ترکیبی استخراج‌شده از همه فایل‌ها (مسیر اصلی)
 let apFileName_ = '';
 
 function selAddProdTab(idx, btn) {
@@ -7471,53 +7474,64 @@ async function ocrPdf(arrayBuffer) {
 }
 
 async function handleApFile(e) {
-  const file = e.target.files[0];
-  if (!file) { toast('فایلی انتخاب نشد — دوباره امتحان کن', 'err'); return; }
-  if (file.size > 8 * 1024 * 1024) {
-    toast('فایل بزرگتر از ۸MB است', 'err');
-    e.target.value = ''; return;
-  }
+  const files = Array.from(e.target.files || []);
+  if (!files.length) { toast('فایلی انتخاب نشد — دوباره امتحان کن', 'err'); return; }
 
-  apFileName_ = file.name;
+  const MAX_FILES = 8;
+  const MAX_SIZE  = 8 * 1024 * 1024;
+  const tooBig = files.find(f => f.size > MAX_SIZE);
+  if (tooBig) { toast(`«${tooBig.name}» بزرگتر از ۸MB است`, 'err'); e.target.value = ''; return; }
+  if (files.length > MAX_FILES) { toast(`حداکثر ${MAX_FILES} فایل با هم`, 'err'); e.target.value = ''; return; }
+
+  apFileName_ = files.length === 1 ? files[0].name : `${files.length} فایل`;
   apOcrText   = null;
-  apFileData  = null;
+  apFileData  = [];
 
   const zone            = document.getElementById('apUpzone');
   const originalZoneHTML = zone.innerHTML;
 
-  const setStatus = (msg) => {
+  const setStatus = (msg, sub) => {
     zone.innerHTML = `
       <div class="upzone-ic"><div class="spin dark" style="width:28px;height:28px;border-width:3px;margin:0 auto"></div></div>
       <div class="upzone-txt">${msg}</div>
-      <div class="upzone-sub">${file.name}</div>`;
+      <div class="upzone-sub">${sub || ''}</div>`;
   };
 
   try {
-    const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
-    setStatus('در حال خواندن فایل...');
+    const ocrPages = []; // متن هر فایل/صفحه به‌ترتیب، بعداً به هم متصل می‌شن
 
-    if (isPdf) {
-      // PDF → PDF.js → canvas → Tesseract
-      setStatus('در حال استخراج متن از PDF...');
-      const buf  = await file.arrayBuffer();
-      apOcrText  = await ocrPdf(buf);
-      // Also keep base64 as fallback for vision AI
-      apFileData = await readFileAsBase64(file);
-    } else {
-      // Image → Tesseract directly
-      setStatus('در حال آماده‌سازی OCR...');
-      await waitForTesseract();
-      setStatus('در حال خواندن متن از عکس...');
-      const imgUrl = URL.createObjectURL(file);
-      const result = await Tesseract.recognize(imgUrl, 'fas+eng', { logger: () => {}, ...TESS_OPTS });
-      apOcrText = result.data.text || '';
-      URL.revokeObjectURL(imgUrl);
-      apFileData = await readFileAsBase64(file);
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const fileLabel = files.length > 1 ? `فایل ${i + 1} از ${files.length}` : file.name;
+      const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+
+      if (isPdf) {
+        setStatus(`در حال استخراج متن از PDF...`, fileLabel);
+        const buf = await file.arrayBuffer();
+        const pdfText = await ocrPdf(buf);
+        if (pdfText && pdfText.trim()) ocrPages.push(pdfText.trim());
+      } else {
+        setStatus(`در حال آماده‌سازی OCR...`, fileLabel);
+        await waitForTesseract();
+        setStatus(`در حال خواندن متن از عکس...`, fileLabel);
+        const imgUrl = URL.createObjectURL(file);
+        const result = await Tesseract.recognize(imgUrl, 'fas+eng', { logger: () => {}, ...TESS_OPTS });
+        URL.revokeObjectURL(imgUrl);
+        if (result.data.text && result.data.text.trim()) ocrPages.push(result.data.text.trim());
+      }
+
+      // بدون توجه به موفقیت OCR، نسخه base64 رو هم برای fallback به Vision AI نگه می‌داریم
+      // (حداکثر ۴ فایل، تا حجم درخواست به Vision AI بیش‌ازحد بزرگ نشه)
+      if (apFileData.length < 4) {
+        apFileData.push(await readFileAsBase64(file));
+      }
     }
+
+    apOcrText = ocrPages.join('\n\n--- صفحه بعد ---\n\n');
 
     const hasText = apOcrText && apOcrText.trim().length > 30;
     document.getElementById('apFileName').textContent =
-      file.name + (hasText ? ' ✅ متن استخراج شد' : ' ⚠️ متن کم — AI مستقیم می‌خونه');
+      apFileName_ + (hasText ? ` · ✅ متن ${files.length > 1 ? 'همه فایل‌ها' : ''} استخراج شد` : ' ⚠️ متن کم — AI مستقیم می‌خونه');
     document.getElementById('apFilePreview').classList.remove('hidden');
     zone.style.display  = 'none';
     zone.innerHTML      = originalZoneHTML;
@@ -7532,7 +7546,7 @@ async function handleApFile(e) {
 }
 
 function clearApFile() {
-  apFileData  = null;
+  apFileData  = [];
   apOcrText   = null;
   apFileName_ = '';
   document.getElementById('apFilePreview').classList.add('hidden');
@@ -7542,7 +7556,7 @@ function clearApFile() {
 }
 
 async function analyzeCatalog() {
-  if (!apFileData && !apOcrText) { toast('فایل آپلود کن', 'err'); return; }
+  if (!apFileData.length && !apOcrText) { toast('فایل آپلود کن', 'err'); return; }
   const btn = document.getElementById('btnAnalyzeCatalog');
   btn.disabled = true;
   btn.innerHTML = '<div class="spin"></div> در حال تحلیل...';
@@ -7568,7 +7582,7 @@ PATIENT: [بیمار ایده‌آل]
       // ── مسیر اصلی: متن OCR شده → AI متنی (همه cascade کار می‌کنه) ──
       const msg = `متن زیر از کاتالوگ یه دارو استخراج شده. اطلاعات رو استخراج کن:
 
-${apOcrText.slice(0,3000)}
+${apOcrText.slice(0,6000)}
 
 ${fields}`;
       text = await gemini(sys, msg);
@@ -7578,7 +7592,7 @@ ${fields}`;
       const msg = `این کاتالوگ دارو رو بخون و اطلاعات زیر رو استخراج کن:
 
 ${fields}`;
-      text = await geminiWithFile(sys, msg, apFileData.base64, apFileData.mimeType);
+      text = await geminiWithFile(sys, msg, apFileData);
     }
 
     const get = key => (text.match(new RegExp(key + ':\\s*([^\\n]+)')) || [])[1]?.trim() || '';
